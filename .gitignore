@@ -1,0 +1,6 @@
+*.pth
+*.pyc
+*.tar
+*.json
+env/
+*.log
