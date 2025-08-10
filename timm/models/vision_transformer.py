@@ -983,38 +983,55 @@ class VisionTransformer(nn.Module):
 
         ####    
         elif not train_val:  #### validate.py
-            p = self.p = int(thinking_stages[0]) / 12
-            x_out_stage_0 = self.forward_features(x, p)
-            logits_stage_0 = self.forward_head(x_out_stage_0)
-            entropy_stage_0 = self.entropy(logits_stage_0)
 
-            p = self.p = int(thinking_stages[1]) / 12
-            x_out_stage_1 = self.forward_features(x, p, x_out_stage_0, thinking_stages)
-            logits_stage_1 = self.forward_head(x_out_stage_1)
-            entropy_stage_1 = self.entropy(logits_stage_1)
+            if len(thinking_stages) == 2:
+                p = self.p = int(thinking_stages[0]) / 12
+                x_out_stage_0 = self.forward_features(x, p)
+                logits_stage_0 = self.forward_head(x_out_stage_0)
+                entropy_stage_0 = self.entropy(logits_stage_0)
 
-            p = self.p = int(thinking_stages[2]) / 12
-            x_out_stage_2 = self.forward_features(x, p, x_out_stage_1, thinking_stages)
-            logits_stage_2 = self.forward_head(x_out_stage_2)
+                p = self.p = int(thinking_stages[1]) / 12
+                x_out_stage_1 = self.forward_features(x, p, x_out_stage_0, thinking_stages)
+                logits_stage_1 = self.forward_head(x_out_stage_1)
 
-            # Masks
-            mask_stage_0 = entropy_stage_0 < threshold
-            mask_stage_1 = ~mask_stage_0 & (entropy_stage_1 < threshold)
+                mask = entropy_stage_0 < threshold
+                output_logits = torch.where(mask, logits_stage_0, logits_stage_1)
+                return output_logits, mask
 
-            output_logits = logits_stage_2.clone()
-            output_logits = torch.where(mask_stage_0.repeat(1, 1000), logits_stage_0, output_logits)
-            output_logits = torch.where(mask_stage_1.repeat(1, 1000), logits_stage_1, output_logits)
 
-            mask = torch.where(
-                mask_stage_0, 
-                0,
-                torch.where(
-                    mask_stage_1,
-                    1,
-                    2
+            if len(thinking_stages) == 3:
+                p = self.p = int(thinking_stages[0]) / 12
+                x_out_stage_0 = self.forward_features(x, p)
+                logits_stage_0 = self.forward_head(x_out_stage_0)
+                entropy_stage_0 = self.entropy(logits_stage_0)
+
+                p = self.p = int(thinking_stages[1]) / 12
+                x_out_stage_1 = self.forward_features(x, p, x_out_stage_0, thinking_stages)
+                logits_stage_1 = self.forward_head(x_out_stage_1)
+                entropy_stage_1 = self.entropy(logits_stage_1)
+
+                p = self.p = int(thinking_stages[2]) / 12
+                x_out_stage_2 = self.forward_features(x, p, x_out_stage_1, thinking_stages)
+                logits_stage_2 = self.forward_head(x_out_stage_2)
+
+                # Masks
+                mask_stage_0 = entropy_stage_0 < threshold
+                mask_stage_1 = ~mask_stage_0 & (entropy_stage_1 < threshold)
+
+                output_logits = logits_stage_2.clone()
+                output_logits = torch.where(mask_stage_0.repeat(1, 1000), logits_stage_0, output_logits)
+                output_logits = torch.where(mask_stage_1.repeat(1, 1000), logits_stage_1, output_logits)
+
+                mask = torch.where(
+                    mask_stage_0, 
+                    0,
+                    torch.where(
+                        mask_stage_1,
+                        1,
+                        2
+                    )
                 )
-            )
-            return output_logits, mask
+                return output_logits, mask
         
     def forward_head(self, x: torch.Tensor, pre_logits: bool = False) -> torch.Tensor:
         if self.attn_pool is not None:
