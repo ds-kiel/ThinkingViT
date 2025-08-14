@@ -994,8 +994,8 @@ class VisionTransformer(nn.Module):
                 x_out_stage_1 = self.forward_features(x, p, x_out_stage_0, thinking_stages)
                 logits_stage_1 = self.forward_head(x_out_stage_1)
 
-                mask = entropy_stage_0 < threshold
-                output_logits = torch.where(mask, logits_stage_0, logits_stage_1)
+                mask = torch.where(entropy_stage_0 < threshold, 0, 1)
+                output_logits = torch.where(entropy_stage_0 < threshold, logits_stage_0, logits_stage_1)
                 return output_logits, mask
 
 
