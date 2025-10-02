@@ -1,4 +1,4 @@
-# 🚀 ThinkingViT: Matryoshka Thinking Vision Transformer for Elastic Inference 
+# 🚀 ThinkingViT: Matryoshka Thinking Vision Transformer for Elastic Inference - ES-FoMo@ICML2025 
 
 
 **[📄 PAPER: [arXiv:2507.10800](https://arxiv.org/abs/2507.10800)]**
