@@ -1,7 +1,5 @@
 #!/usr/bin/env python3
 
-import os
-os.environ["CUDA_VISIBLE_DEVICES"] = '1'
 """ ImageNet Validation Script
 
 This is intended to be a lean and easily modifiable ImageNet validation script for evaluating pretrained
