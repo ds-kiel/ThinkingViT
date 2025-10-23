@@ -9,7 +9,6 @@ Vision Transformers deliver state-of-the-art performance, yet their fixed comput
   <img src="figures/demo.png" width="100%">
 </div>
 
----
 
 
 ## 🗓️ Updates
@@ -17,7 +16,6 @@ Vision Transformers deliver state-of-the-art performance, yet their fixed comput
 - **Update 24.10.2025**: Added Swin Transformer variant with its pretrained checkpoint.
 - **TODO**: Add semantic segmentation support.
 
----
 
 ## 📦 Quick Start
 
