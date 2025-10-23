@@ -14,9 +14,10 @@ Vision Transformers deliver state-of-the-art performance, yet their fixed comput
 
 ## 🗓️ Updates
 
-- **Update 24.10.2025**: Added Swin Transformer variant.
+- **Update 24.10.2025**: Added Swin Transformer variant with its pretrained checkpoint.
 - **TODO**: Add semantic segmentation support.
---
+
+---
 
 ## 📦 Quick Start
 
