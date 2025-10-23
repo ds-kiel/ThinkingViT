@@ -99,7 +99,7 @@ opt_eps: 1.0e-08
 opt_kwargs: {}
 patience_epochs: 10
 pin_mem: false
-
+pretrained: true
 pretrained_path: null
 ratio:
 - 0.75

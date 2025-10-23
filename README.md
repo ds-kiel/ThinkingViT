@@ -74,7 +74,7 @@ python3 validate.py \
   --data-dir IMAGENET_DIR \
   -b 2048 \
   --use-ema \
-  --threshold 1.5 \
+  --threshold CONFIDENCE_THRESHOLD \
   --thinking_stages 3 6 12
 ```
 
@@ -138,9 +138,7 @@ We also provide a Swin Transformer adaptation that reuses the progressive head s
 ### Training
 
 ```bash
-./distributed_train.sh 4 \
-  --config args_swin.yaml \
-  --pretrained
+./distributed_train.sh 4 --config args_swin.yaml
 ```
 
 ### Inference
@@ -152,7 +150,7 @@ torchrun validate_swin.py \
   --data-dir [IMAGENET_DIR] \
   -b 128 \
   --use-ema \
-  --threshold 0.0
+  --threshold [CONFIDENCE_THRESHOLD]
 ```
 You can download pretrained checkpoints models [Zenodo](https://zenodo.org/records/17429320).
 
