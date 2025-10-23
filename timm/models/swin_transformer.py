@@ -17,17 +17,20 @@ Modifications and additions for timm hacked together by / Copyright 2021, Ross W
 # --------------------------------------------------------
 import logging
 import math
+import numbers
 from typing import Callable, List, Optional, Tuple, Union
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 from timm.data import IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD
-from timm.layers import PatchEmbed, Mlp, DropPath, ClassifierHead, to_2tuple, to_ntuple, trunc_normal_, \
+from timm.layers import PatchEmbed, DropPath, to_2tuple, to_ntuple, trunc_normal_, \
     _assert, use_fused_attn, resize_rel_pos_bias_table, resample_patch_embed, ndgrid
 from ._builder import build_model_with_cfg
 from ._features_fx import register_notrace_function
 from ._manipulate import checkpoint_seq, named_apply
+from torch.distributions import Categorical
 from ._registry import generate_default_cfgs, register_model, register_model_deprecations
 from .vision_transformer import get_init_weights_vit
 
@@ -37,6 +40,137 @@ _logger = logging.getLogger(__name__)
 
 _int_or_tuple_2_t = Union[int, Tuple[int, int]]
 
+
+class Identity(nn.Module):
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__()
+
+    def forward(self, input: torch.Tensor, keep_shape: Optional[int] = None) -> torch.Tensor:
+        return input
+
+
+class Linear(nn.Module):
+    __constants__ = ['in_features', 'out_features']
+    in_features: int
+    out_features: int
+    weight: torch.Tensor
+
+    def __init__(self, in_features: int, out_features: int, bias: bool = True,
+                 device=None, dtype=None) -> None:
+        factory_kwargs = {'device': device, 'dtype': dtype}
+        super().__init__()
+        self.in_features = in_features
+        self.out_features = out_features
+        self.weight = nn.Parameter(torch.empty((out_features, in_features), **factory_kwargs))
+        if bias:
+            self.bias = nn.Parameter(torch.empty(out_features, **factory_kwargs))
+        else:
+            self.register_parameter('bias', None)
+        self.reset_parameters()
+
+    def reset_parameters(self) -> None:
+        nn.init.kaiming_uniform_(self.weight, a=math.sqrt(5))
+        if self.bias is not None:
+            fan_in, _ = nn.init._calculate_fan_in_and_fan_out(self.weight)
+            bound = 1 / math.sqrt(fan_in) if fan_in > 0 else 0
+            nn.init.uniform_(self.bias, -bound, bound)
+
+    def forward(self, input: torch.Tensor, keep_shape_in: Optional[int] = None,
+                keep_shape_out: Optional[int] = None) -> torch.Tensor:
+        if keep_shape_in is None:
+            keep_shape_in = self.in_features
+        if keep_shape_out is None:
+            keep_shape_out = keep_shape_in
+
+        weight = self.weight[:keep_shape_out, :keep_shape_in]
+        bias = self.bias[:keep_shape_out] if self.bias is not None else None
+
+        if input.dim() == 2:
+            return F.linear(input[:, :keep_shape_in], weight, bias)
+        if input.dim() == 3:
+            return F.linear(input[:, :, :keep_shape_in], weight, bias)
+        if input.dim() == 4:
+            return F.linear(input[..., :keep_shape_in], weight, bias)
+
+        raise ValueError('Unsupported input rank for Linear slicing')
+
+    def extra_repr(self) -> str:
+        return f'in_features={self.in_features}, out_features={self.out_features}, bias={self.bias is not None}'
+
+
+class LayerNorm(nn.Module):
+    __constants__ = ['normalized_shape', 'eps', 'elementwise_affine']
+
+    def __init__(self, normalized_shape: Union[int, Tuple[int, ...]], eps: float = 1e-5,
+                 elementwise_affine: bool = True, device=None, dtype=None) -> None:
+        factory_kwargs = {'device': device, 'dtype': dtype}
+        super().__init__()
+        if isinstance(normalized_shape, numbers.Integral):
+            normalized_shape = (normalized_shape,)
+        self.normalized_shape = tuple(normalized_shape)
+        self.eps = eps
+        self.elementwise_affine = elementwise_affine
+        if self.elementwise_affine:
+            self.weight = nn.Parameter(torch.empty(self.normalized_shape, **factory_kwargs))
+            self.bias = nn.Parameter(torch.empty(self.normalized_shape, **factory_kwargs))
+        else:
+            self.register_parameter('weight', None)
+            self.register_parameter('bias', None)
+        self.reset_parameters()
+
+    def reset_parameters(self) -> None:
+        if self.elementwise_affine:
+            nn.init.ones_(self.weight)
+            nn.init.zeros_(self.bias)
+
+    def forward(self, input: torch.Tensor, keep_shape: Optional[int] = None) -> torch.Tensor:
+        if keep_shape is None:
+            return F.layer_norm(input, self.normalized_shape, self.weight, self.bias, self.eps)
+
+        weight = self.weight[:keep_shape] if self.weight is not None else None
+        bias = self.bias[:keep_shape] if self.bias is not None else None
+
+        if input.dim() == 2:
+            return F.layer_norm(input[:, :keep_shape], (keep_shape,), weight, bias, self.eps)
+        if input.dim() == 3:
+            return F.layer_norm(input[:, :, :keep_shape], (keep_shape,), weight, bias, self.eps)
+        if input.dim() == 4:
+            return F.layer_norm(input[..., :keep_shape], (keep_shape,), weight, bias, self.eps)
+
+        raise ValueError('Unsupported input rank for LayerNorm slicing')
+
+    def extra_repr(self) -> str:
+        return f'{self.normalized_shape}, eps={self.eps}, elementwise_affine={self.elementwise_affine}'
+
+
+class SwinMlp(nn.Module):
+    def __init__(self, in_features: int, hidden_features: Optional[int] = None,
+                 out_features: Optional[int] = None, act_layer: Callable = nn.GELU,
+                 drop: float = 0.) -> None:
+        super().__init__()
+        out_features = out_features or in_features
+        hidden_features = hidden_features or in_features
+        self.fc1 = Linear(in_features, hidden_features)
+        self.act = act_layer()
+        self.fc2 = Linear(hidden_features, out_features)
+        self.drop = nn.Dropout(drop)
+        self.in_features = in_features
+        self.hidden_features = hidden_features
+        self.out_features = out_features
+
+    def forward(self, x: torch.Tensor, p: float) -> torch.Tensor:
+        keep_in = int(self.in_features * p)
+        keep_hidden = int(self.hidden_features * p)
+        keep_hidden = max(1, keep_hidden)
+        keep_out = int(self.out_features * p)
+        keep_out = max(1, keep_out)
+
+        x = self.fc1(x, keep_in, keep_hidden)
+        x = self.act(x)
+        x = self.drop(x)
+        x = self.fc2(x, keep_hidden, keep_out)
+        x = self.drop(x)
+        return x
 
 def window_partition(
         x: torch.Tensor,
@@ -104,16 +238,6 @@ class WindowAttention(nn.Module):
             attn_drop: float = 0.,
             proj_drop: float = 0.,
     ):
-        """
-        Args:
-            dim: Number of input channels.
-            num_heads: Number of attention heads.
-            head_dim: Number of channels per head (dim // num_heads if not set)
-            window_size: The height and width of the window.
-            qkv_bias:  If True, add a learnable bias to query, key, value.
-            attn_drop: Dropout ratio of attention weight.
-            proj_drop: Dropout ratio of output.
-        """
         super().__init__()
         self.dim = dim
         self.window_size = to_2tuple(window_size)  # Wh, Ww
@@ -121,47 +245,58 @@ class WindowAttention(nn.Module):
         self.window_area = win_h * win_w
         self.num_heads = num_heads
         head_dim = head_dim or dim // num_heads
+        self.head_dim = head_dim
         attn_dim = head_dim * num_heads
         self.scale = head_dim ** -0.5
-        self.fused_attn = use_fused_attn(experimental=True)  # NOTE not tested for prime-time yet
+        self.fused_attn = use_fused_attn(experimental=True)
 
-        # define a parameter table of relative position bias, shape: 2*Wh-1 * 2*Ww-1, nH
-        self.relative_position_bias_table = nn.Parameter(torch.zeros((2 * win_h - 1) * (2 * win_w - 1), num_heads))
+        self.relative_position_bias_table = nn.Parameter(
+            torch.zeros((2 * win_h - 1) * (2 * win_w - 1), num_heads)
+        )
+        self.register_buffer(
+            "relative_position_index",
+            get_relative_position_index(win_h, win_w),
+            persistent=False,
+        )
 
-        # get pair-wise relative position index for each token inside the window
-        self.register_buffer("relative_position_index", get_relative_position_index(win_h, win_w), persistent=False)
-
-        self.qkv = nn.Linear(dim, attn_dim * 3, bias=qkv_bias)
+        self.qkv = Linear(dim, attn_dim * 3, bias=qkv_bias)
         self.attn_drop = nn.Dropout(attn_drop)
-        self.proj = nn.Linear(attn_dim, dim)
+        self.proj = Linear(attn_dim, dim)
         self.proj_drop = nn.Dropout(proj_drop)
 
         trunc_normal_(self.relative_position_bias_table, std=.02)
         self.softmax = nn.Softmax(dim=-1)
 
+        # debug info
+        self.last_active_heads: int = num_heads
+        self.last_keep_dim: int = dim
+        self.last_q_shape: Tuple[int, ...] = (0, 0, 0, 0)
+        self.last_output_shape: Tuple[int, ...] = (0, 0, 0)
+
     def _get_rel_pos_bias(self) -> torch.Tensor:
         relative_position_bias = self.relative_position_bias_table[
-            self.relative_position_index.view(-1)].view(self.window_area, self.window_area, -1)  # Wh*Ww,Wh*Ww,nH
-        relative_position_bias = relative_position_bias.permute(2, 0, 1).contiguous()  # nH, Wh*Ww, Wh*Ww
+            self.relative_position_index.view(-1)
+        ].view(self.window_area, self.window_area, -1)
+        relative_position_bias = relative_position_bias.permute(2, 0, 1).contiguous()
         return relative_position_bias.unsqueeze(0)
 
-    def forward(self, x, mask: Optional[torch.Tensor] = None):
-        """
-        Args:
-            x: input features with shape of (num_windows*B, N, C)
-            mask: (0/-inf) mask with shape of (num_windows, Wh*Ww, Wh*Ww) or None
-        """
-        B_, N, C = x.shape
-        qkv = self.qkv(x).reshape(B_, N, 3, self.num_heads, -1).permute(2, 0, 3, 1, 4)
+    def forward(self, x, mask: Optional[torch.Tensor] = None, p: float = 1.0):
+        B_, N, _ = x.shape
+        keep_heads = max(1, min(self.num_heads, int(round(self.num_heads * p))))
+        keep_dim = keep_heads * self.head_dim
+
+        qkv = self.qkv(x, keep_shape_in=keep_dim, keep_shape_out=keep_dim * 3)
+        qkv = qkv.reshape(B_, N, 3, keep_heads, self.head_dim).permute(2, 0, 3, 1, 4)
         q, k, v = qkv.unbind(0)
+        self.last_q_shape = q.shape
 
         if self.fused_attn:
-            attn_mask = self._get_rel_pos_bias()
+            attn_mask = self._get_rel_pos_bias()[:, :keep_heads]
             if mask is not None:
                 num_win = mask.shape[0]
-                mask = mask.view(1, num_win, 1, N, N).expand(B_ // num_win, -1, self.num_heads, -1, -1)
-                attn_mask = attn_mask + mask.reshape(-1, self.num_heads, N, N)
-            x = torch.nn.functional.scaled_dot_product_attention(
+                expanded = mask.view(1, num_win, 1, N, N).expand(B_ // num_win, -1, keep_heads, -1, -1)
+                attn_mask = attn_mask + expanded.reshape(-1, keep_heads, N, N)
+            x = F.scaled_dot_product_attention(
                 q, k, v,
                 attn_mask=attn_mask,
                 dropout_p=self.attn_drop.p if self.training else 0.,
@@ -169,24 +304,27 @@ class WindowAttention(nn.Module):
         else:
             q = q * self.scale
             attn = q @ k.transpose(-2, -1)
-            attn = attn + self._get_rel_pos_bias()
+            attn = attn + self._get_rel_pos_bias()[:, :keep_heads]
             if mask is not None:
                 num_win = mask.shape[0]
-                attn = attn.view(-1, num_win, self.num_heads, N, N) + mask.unsqueeze(1).unsqueeze(0)
-                attn = attn.view(-1, self.num_heads, N, N)
+                attn = attn.view(-1, num_win, keep_heads, N, N) + mask.unsqueeze(1).unsqueeze(0)
+                attn = attn.view(-1, keep_heads, N, N)
             attn = self.softmax(attn)
             attn = self.attn_drop(attn)
             x = attn @ v
 
-        x = x.transpose(1, 2).reshape(B_, N, -1)
-        x = self.proj(x)
+        x = x.transpose(1, 2).reshape(B_, N, keep_dim)
+        x = self.proj(x, keep_shape_in=keep_dim, keep_shape_out=keep_dim)
         x = self.proj_drop(x)
+
+        self.last_active_heads = keep_heads
+        self.last_keep_dim = keep_dim
+        self.last_output_shape = x.shape
         return x
 
 
 class SwinTransformerBlock(nn.Module):
-    """ Swin Transformer Block.
-    """
+    """ Swin Transformer Block supporting dynamic channel slicing."""
 
     def __init__(
             self,
@@ -202,24 +340,8 @@ class SwinTransformerBlock(nn.Module):
             attn_drop: float = 0.,
             drop_path: float = 0.,
             act_layer: Callable = nn.GELU,
-            norm_layer: Callable = nn.LayerNorm,
+            norm_layer: Callable = LayerNorm,
     ):
-        """
-        Args:
-            dim: Number of input channels.
-            input_resolution: Input resolution.
-            window_size: Window size.
-            num_heads: Number of attention heads.
-            head_dim: Enforce the number of channels per head
-            shift_size: Shift size for SW-MSA.
-            mlp_ratio: Ratio of mlp hidden dim to embedding dim.
-            qkv_bias: If True, add a learnable bias to query, key, value.
-            proj_drop: Dropout rate.
-            attn_drop: Attention dropout rate.
-            drop_path: Stochastic depth rate.
-            act_layer: Activation layer.
-            norm_layer: Normalization layer.
-        """
         super().__init__()
         self.dim = dim
         self.input_resolution = input_resolution
@@ -227,7 +349,6 @@ class SwinTransformerBlock(nn.Module):
         self.window_size: Tuple[int, int] = ws
         self.shift_size: Tuple[int, int] = ss
         self.window_area = self.window_size[0] * self.window_size[1]
-        self.mlp_ratio = mlp_ratio
 
         self.norm1 = norm_layer(dim)
         self.attn = WindowAttention(
@@ -242,7 +363,7 @@ class SwinTransformerBlock(nn.Module):
         self.drop_path1 = DropPath(drop_path) if drop_path > 0. else nn.Identity()
 
         self.norm2 = norm_layer(dim)
-        self.mlp = Mlp(
+        self.mlp = SwinMlp(
             in_features=dim,
             hidden_features=int(dim * mlp_ratio),
             act_layer=act_layer,
@@ -251,11 +372,10 @@ class SwinTransformerBlock(nn.Module):
         self.drop_path2 = DropPath(drop_path) if drop_path > 0. else nn.Identity()
 
         if any(self.shift_size):
-            # calculate attention mask for SW-MSA
             H, W = self.input_resolution
             H = math.ceil(H / self.window_size[0]) * self.window_size[0]
             W = math.ceil(W / self.window_size[1]) * self.window_size[1]
-            img_mask = torch.zeros((1, H, W, 1))  # 1 H W 1
+            img_mask = torch.zeros((1, H, W, 1))
             cnt = 0
             for h in (
                     slice(0, -self.window_size[0]),
@@ -267,7 +387,7 @@ class SwinTransformerBlock(nn.Module):
                         slice(-self.shift_size[1], None)):
                     img_mask[:, h, w, :] = cnt
                     cnt += 1
-            mask_windows = window_partition(img_mask, self.window_size)  # nW, window_size, window_size, 1
+            mask_windows = window_partition(img_mask, self.window_size)
             mask_windows = mask_windows.view(-1, self.window_area)
             attn_mask = mask_windows.unsqueeze(1) - mask_windows.unsqueeze(2)
             attn_mask = attn_mask.masked_fill(attn_mask != 0, float(-100.0)).masked_fill(attn_mask == 0, float(0.0))
@@ -283,47 +403,51 @@ class SwinTransformerBlock(nn.Module):
         shift_size = [0 if r <= w else s for r, w, s in zip(self.input_resolution, window_size, target_shift_size)]
         return tuple(window_size), tuple(shift_size)
 
-    def _attn(self, x):
+    def _attn(self, x: torch.Tensor, p: float) -> torch.Tensor:
         B, H, W, C = x.shape
+        keep_dim = x.shape[-1]
 
-        # cyclic shift
         has_shift = any(self.shift_size)
         if has_shift:
             shifted_x = torch.roll(x, shifts=(-self.shift_size[0], -self.shift_size[1]), dims=(1, 2))
         else:
             shifted_x = x
 
-        # pad for resolution not divisible by window size
         pad_h = (self.window_size[0] - H % self.window_size[0]) % self.window_size[0]
         pad_w = (self.window_size[1] - W % self.window_size[1]) % self.window_size[1]
-        shifted_x = torch.nn.functional.pad(shifted_x, (0, 0, 0, pad_w, 0, pad_h))
+        shifted_x = F.pad(shifted_x, (0, 0, 0, pad_w, 0, pad_h))
         Hp, Wp = H + pad_h, W + pad_w
 
-        # partition windows
-        x_windows = window_partition(shifted_x, self.window_size)  # nW*B, window_size, window_size, C
-        x_windows = x_windows.view(-1, self.window_area, C)  # nW*B, window_size*window_size, C
+        x_windows = window_partition(shifted_x, self.window_size)
+        x_windows = x_windows.view(-1, self.window_area, keep_dim)
 
-        # W-MSA/SW-MSA
-        attn_windows = self.attn(x_windows, mask=self.attn_mask)  # nW*B, window_size*window_size, C
+        attn_windows = self.attn(x_windows, mask=self.attn_mask, p=p)
+        keep_dim_out = attn_windows.shape[-1]
 
-        # merge windows
-        attn_windows = attn_windows.view(-1, self.window_size[0], self.window_size[1], C)
-        shifted_x = window_reverse(attn_windows, self.window_size, Hp, Wp)  # B H' W' C
-        shifted_x = shifted_x[:, :H, :W, :].contiguous()
+        attn_windows = attn_windows.view(-1, self.window_size[0], self.window_size[1], keep_dim_out)
+        shifted_x = window_reverse(attn_windows, self.window_size, Hp, Wp)
+        shifted_x = shifted_x[:, :H, :W, :keep_dim_out].contiguous()
 
-        # reverse cyclic shift
         if has_shift:
             x = torch.roll(shifted_x, shifts=self.shift_size, dims=(1, 2))
         else:
             x = shifted_x
         return x
 
-    def forward(self, x):
-        B, H, W, C = x.shape
-        x = x + self.drop_path1(self._attn(self.norm1(x)))
-        x = x.reshape(B, -1, C)
-        x = x + self.drop_path2(self.mlp(self.norm2(x)))
-        x = x.reshape(B, H, W, C)
+    def forward(self, x: torch.Tensor, p: float) -> torch.Tensor:
+        keep_dim = max(1, int(round(self.dim * p)))
+        x = x[..., :keep_dim]
+
+        shortcut = x
+        x_norm = self.norm1(x, keep_dim)
+        attn_out = self._attn(x_norm, p)
+        x = shortcut + self.drop_path1(attn_out)
+
+        B, H, W, _ = x.shape
+        x_flat = x.reshape(B, -1, keep_dim)
+        mlp_out = self.mlp(self.norm2(x_flat, keep_dim), p)
+        x_flat = x_flat + self.drop_path2(mlp_out)
+        x = x_flat.reshape(B, H, W, keep_dim)
         return x
 
 
@@ -335,7 +459,7 @@ class PatchMerging(nn.Module):
             self,
             dim: int,
             out_dim: Optional[int] = None,
-            norm_layer: Callable = nn.LayerNorm,
+            norm_layer: Callable = LayerNorm,
     ):
         """
         Args:
@@ -347,15 +471,20 @@ class PatchMerging(nn.Module):
         self.dim = dim
         self.out_dim = out_dim or 2 * dim
         self.norm = norm_layer(4 * dim)
-        self.reduction = nn.Linear(4 * dim, self.out_dim, bias=False)
+        self.reduction = Linear(4 * dim, self.out_dim, bias=False)
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor, p_in: float, p_out: float) -> torch.Tensor:
         B, H, W, C = x.shape
         _assert(H % 2 == 0, f"x height ({H}) is not even.")
         _assert(W % 2 == 0, f"x width ({W}) is not even.")
-        x = x.reshape(B, H // 2, 2, W // 2, 2, C).permute(0, 1, 3, 4, 2, 5).flatten(3)
-        x = self.norm(x)
-        x = self.reduction(x)
+
+        keep_in = max(1, int(round(self.dim * p_in)))
+        keep_out = max(1, int(round(self.out_dim * p_out)))
+
+        x = x[..., :keep_in]
+        x = x.reshape(B, H // 2, 2, W // 2, 2, keep_in).permute(0, 1, 3, 4, 2, 5).flatten(3)
+        x = self.norm(x, keep_shape=4 * keep_in)
+        x = self.reduction(x, keep_shape_in=4 * keep_in, keep_shape_out=keep_out)
         return x
 
 
@@ -399,6 +528,7 @@ class SwinTransformerStage(nn.Module):
         """
         super().__init__()
         self.dim = dim
+        self.out_dim = out_dim
         self.input_resolution = input_resolution
         self.output_resolution = tuple(i // 2 for i in input_resolution) if downsample else input_resolution
         self.depth = depth
@@ -418,7 +548,7 @@ class SwinTransformerStage(nn.Module):
             self.downsample = nn.Identity()
 
         # build blocks
-        self.blocks = nn.Sequential(*[
+        self.blocks = nn.ModuleList([
             SwinTransformerBlock(
                 dim=out_dim,
                 input_resolution=self.output_resolution,
@@ -433,16 +563,54 @@ class SwinTransformerStage(nn.Module):
                 drop_path=drop_path[i] if isinstance(drop_path, list) else drop_path,
                 norm_layer=norm_layer,
             )
-            for i in range(depth)])
+            for i in range(depth)
+        ])
+        self.max_heads = num_heads
+        self.head_dim = head_dim or (out_dim // num_heads if num_heads > 0 else out_dim)
 
-    def forward(self, x):
-        x = self.downsample(x)
-
-        if self.grad_checkpointing and not torch.jit.is_scripting():
-            x = checkpoint_seq(self.blocks, x)
+    def forward(self, x: torch.Tensor, p_in: float, p_out: float) -> torch.Tensor:
+        if isinstance(self.downsample, PatchMerging):
+            x = self.downsample(x, p_in=p_in, p_out=p_out)
         else:
-            x = self.blocks(x)
+            keep_dim = max(1, int(round(self.out_dim * p_out)))
+            x = x[..., :keep_dim]
+
+        for block in self.blocks:
+            # print(x.shape)
+            x = block(x, p_out)
         return x
+
+
+class ThinkingClassifierHead(nn.Module):
+    def __init__(self, in_features: int, num_classes: int, drop_rate: float = 0.,
+                 pool_type: str = 'avg') -> None:
+        super().__init__()
+        self.in_features = in_features
+        self.num_classes = num_classes
+        self.pool_type = pool_type or ''
+        self.drop = nn.Dropout(drop_rate)
+        self.fc = Linear(in_features, num_classes)
+
+    def forward(self, x: torch.Tensor, keep_dim: int, pre_logits: bool = False) -> torch.Tensor:
+        if self.pool_type == 'avg':
+            x = x.mean(dim=(1, 2))
+        else:
+            x = x.reshape(x.shape[0], -1, keep_dim).mean(dim=1)
+
+        x = x[:, :keep_dim]
+        x = self.drop(x)
+        if pre_logits:
+            return x
+        return self.fc(x, keep_shape_in=keep_dim, keep_shape_out=self.num_classes)
+
+    def reset(self, num_classes: int, pool_type: Optional[str] = None) -> None:
+        self.num_classes = num_classes
+        if pool_type is not None:
+            self.pool_type = pool_type
+        device = self.fc.weight.device if hasattr(self.fc, 'weight') else None
+        self.fc = Linear(self.in_features, num_classes)
+        if device is not None:
+            self.fc = self.fc.to(device)
 
 
 class SwinTransformer(nn.Module):
@@ -505,6 +673,11 @@ class SwinTransformer(nn.Module):
         self.num_features = int(embed_dim * 2 ** (self.num_layers - 1))
         self.feature_info = []
 
+        if isinstance(norm_layer, str):
+            norm_layer = LayerNorm
+        elif isinstance(norm_layer, type) and issubclass(norm_layer, nn.LayerNorm):
+            norm_layer = LayerNorm
+
         if not isinstance(embed_dim, (tuple, list)):
             embed_dim = [int(embed_dim * 2 ** i) for i in range(self.num_layers)]
 
@@ -528,12 +701,14 @@ class SwinTransformer(nn.Module):
         assert len(window_size) == self.num_layers
         mlp_ratio = to_ntuple(self.num_layers)(mlp_ratio)
         dpr = [x.tolist() for x in torch.linspace(0, drop_path_rate, sum(depths)).split(depths)]
-        layers = []
+        layers: List[SwinTransformerStage] = []
+        self.stage_max_heads: List[int] = []
+        self.stage_dims: List[int] = []
         in_dim = embed_dim[0]
         scale = 1
         for i in range(self.num_layers):
             out_dim = embed_dim[i]
-            layers += [SwinTransformerStage(
+            stage = SwinTransformerStage(
                 dim=in_dim,
                 out_dim=out_dim,
                 input_resolution=(
@@ -551,21 +726,35 @@ class SwinTransformer(nn.Module):
                 attn_drop=attn_drop_rate,
                 drop_path=dpr[i],
                 norm_layer=norm_layer,
-            )]
+            )
+            layers.append(stage)
+            self.stage_max_heads.append(num_heads[i])
+            self.stage_dims.append(out_dim)
             in_dim = out_dim
             if i > 0:
                 scale *= 2
             self.feature_info += [dict(num_chs=out_dim, reduction=4 * scale, module=f'layers.{i}')]
-        self.layers = nn.Sequential(*layers)
+        self.layers = nn.ModuleList(layers)
 
         self.norm = norm_layer(self.num_features)
-        self.head = ClassifierHead(
-            self.num_features,
-            num_classes,
-            pool_type=global_pool,
+        self.head = ThinkingClassifierHead(
+            in_features=self.num_features,
+            num_classes=num_classes,
             drop_rate=drop_rate,
-            input_fmt=self.output_fmt,
+            pool_type=global_pool,
         )
+        self.head_rounds: Tuple[Tuple[int, ...], Tuple[int, ...]] = (
+            (3, 3, 6, 12),
+            # (3, 6, 7, 24),
+            (3, 6, 12, 24),
+        )
+        self.max_heads = max(self.head_rounds[-1])
+        self.eval_stage_index = len(self.head_rounds) - 1
+        self.debug_thinking = False
+        if not hasattr(self, 'alpha'):
+            self.alpha = nn.ParameterList([nn.Parameter(torch.zeros(1))])
+        if not hasattr(self, 'proj_layer'):
+            self.proj_layer = None
         if weight_init != 'skip':
             self.init_weights(weight_init)
 
@@ -600,6 +789,10 @@ class SwinTransformer(nn.Module):
             l.grad_checkpointing = enable
 
     @torch.jit.ignore
+    def enable_thinking_debug(self, enable: bool = True) -> None:
+        self.debug_thinking = enable
+
+    @torch.jit.ignore
     def get_classifier(self):
         return self.head.fc
 
@@ -607,19 +800,132 @@ class SwinTransformer(nn.Module):
         self.num_classes = num_classes
         self.head.reset(num_classes, pool_type=global_pool)
 
+    def _alpha_value(self) -> Optional[torch.Tensor]:
+        alpha = getattr(self, 'alpha', None)
+        if isinstance(alpha, nn.ParameterList) and len(alpha) > 0:
+            return alpha[0].view(1, 1, 1, 1)
+        if isinstance(alpha, nn.Parameter):
+            return alpha.view(1, 1, 1, 1)
+        return None
+
+    def _apply_round_input(
+            self,
+            x_tokens: torch.Tensor,
+            prev_tokens: Optional[torch.Tensor],
+            keep_dim_target: int,
+            prev_keep_dim: Optional[int],
+    ) -> torch.Tensor:
+        x_tokens = x_tokens[..., :keep_dim_target]
+        if prev_tokens is None or self.proj_layer is None:
+            return x_tokens
+        prev_keep_dim = prev_keep_dim or prev_tokens.shape[-1]
+        addition = self.proj_layer(prev_tokens, prev_keep_dim, keep_dim_target)
+        alpha_val = self._alpha_value()
+        if alpha_val is not None:
+            return x_tokens + alpha_val * addition
+        return x_tokens + addition
+
+    def _run_stages(
+            self,
+            x_tokens: torch.Tensor,
+            head_schedule: Tuple[int, ...],
+            p_schedule: List[float],
+    ) -> torch.Tensor:
+        debug_active = getattr(self, 'debug_thinking', False)
+        for idx, (stage, heads, p_out) in enumerate(zip(self.layers, head_schedule, p_schedule)):
+            p_in = p_schedule[idx - 1] if idx > 0 else p_out
+            if debug_active:
+                print(
+                    f"[Thinking] Stage {idx} input={tuple(x_tokens.shape)} requested_heads={heads}"
+                )
+
+            x_tokens = stage(x_tokens, p_in=p_in, p_out=p_out)
+
+            if debug_active:
+                first_block = stage.blocks[0] if hasattr(stage, 'blocks') and len(stage.blocks) > 0 else None
+                attn = getattr(first_block, 'attn', None) if first_block is not None else None
+                if attn is not None:
+                    applied_heads = getattr(attn, 'last_active_heads', heads)
+                    keep_dim = getattr(attn, 'last_keep_dim', int(round(stage.head_dim * applied_heads)))
+                    q_shape = getattr(attn, 'last_q_shape', None)
+                    print(
+                        f"           output={tuple(x_tokens.shape)} applied_heads={applied_heads}/{attn.num_heads} "
+                        f"keep_dim={keep_dim}/{stage.out_dim} q_shape={q_shape}"
+                    )
+                else:
+                    print(f"           output={tuple(x_tokens.shape)} (no attention stats available)")
+
+        return x_tokens
+
+    def _forward_round(
+            self,
+            x: torch.Tensor,
+            head_schedule: Tuple[int, ...],
+            prev_tokens: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        p_schedule = [max(1, heads) / max_heads for heads, max_heads in zip(head_schedule, self.stage_max_heads)]
+        p_schedule = [min(1.0, p) for p in p_schedule]
+
+        x_tokens = self.patch_embed(x)
+        keep_dim0 = max(1, int(round(self.stage_dims[0] * p_schedule[0])))
+        prev_keep_dim = prev_tokens.shape[-1] if prev_tokens is not None else None
+        x_tokens = self._apply_round_input(x_tokens, prev_tokens, keep_dim0, prev_keep_dim)
+        x_tokens = self._run_stages(x_tokens, head_schedule, p_schedule)
+
+        keep_dim_final = max(1, int(round(self.stage_dims[-1] * p_schedule[-1])))
+        x_tokens = self.norm(x_tokens, keep_shape=keep_dim_final)
+        return x_tokens, keep_dim_final
+
     def forward_features(self, x):
-        x = self.patch_embed(x)
-        x = self.layers(x)
-        x = self.norm(x)
-        return x
+        tokens, keep_dim = self._forward_round(x, self.head_rounds[-1])
+        self._last_keep_dim = keep_dim
+        return tokens
 
-    def forward_head(self, x, pre_logits: bool = False):
-        return self.head(x, pre_logits=True) if pre_logits else self.head(x)
+    def forward_head(self, x, keep_dim: Optional[int] = None, pre_logits: bool = False):
+        keep_dim = keep_dim or getattr(self, '_last_keep_dim', x.shape[-1])
+        return self.head(x, keep_dim=keep_dim, pre_logits=pre_logits)
 
-    def forward(self, x):
-        x = self.forward_features(x)
-        x = self.forward_head(x)
-        return x
+    def entropy(self, logits: torch.Tensor) -> torch.Tensor:
+        probs = F.softmax(logits, dim=1)
+        topk = torch.topk(probs, min(probs.shape[1], 10), dim=1).values
+        return Categorical(probs=topk).entropy().unsqueeze(1)
+
+    def forward(self, x, threshold: Optional[float] = None, train_val: bool = False, **kwargs):
+        if self.training:
+            # print('r1')
+            tokens_stage_0, keep0 = self._forward_round(x, self.head_rounds[0])
+            logits_stage_0 = self.forward_head(tokens_stage_0, keep_dim=keep0)
+            # print('r2')
+            tokens_stage_1, keep1 = self._forward_round(x, self.head_rounds[1], prev_tokens=tokens_stage_0)
+            logits_stage_1 = self.forward_head(tokens_stage_1, keep_dim=keep1)
+            return logits_stage_0, logits_stage_1
+
+        if train_val:
+            stage_index = getattr(self, 'eval_stage_index', len(self.head_rounds) - 1)
+            tokens_stage_0, keep0 = self._forward_round(x, self.head_rounds[0])
+            if stage_index == 0:
+                return self.forward_head(tokens_stage_0, keep_dim=keep0)
+
+            tokens_stage_1, keep1 = self._forward_round(x, self.head_rounds[1], prev_tokens=tokens_stage_0)
+            return self.forward_head(tokens_stage_1, keep_dim=keep1)
+
+        tokens_stage_0, keep0 = self._forward_round(x, self.head_rounds[0])
+        logits_stage_0 = self.forward_head(tokens_stage_0, keep_dim=keep0)
+        if threshold is None:
+            return logits_stage_0
+
+        entropy_stage_0 = self.entropy(logits_stage_0)
+        tokens_stage_1, keep1 = self._forward_round(x, self.head_rounds[1], prev_tokens=tokens_stage_0)
+        logits_stage_1 = self.forward_head(tokens_stage_1, keep_dim=keep1)
+
+        selection = entropy_stage_0 < threshold
+        output_logits = torch.where(selection, logits_stage_0, logits_stage_1)
+        mask = torch.where(
+            selection,
+            torch.zeros_like(entropy_stage_0, dtype=torch.long),
+            torch.ones_like(entropy_stage_0, dtype=torch.long),
+        ).squeeze(-1)
+        return output_logits, mask
 
 
 def checkpoint_filter_fn(state_dict, model):
@@ -666,6 +972,9 @@ def checkpoint_filter_fn(state_dict, model):
 def _create_swin_transformer(variant, pretrained=False, **kwargs):
     default_out_indices = tuple(i for i, _ in enumerate(kwargs.get('depths', (1, 1, 3, 1))))
     out_indices = kwargs.pop('out_indices', default_out_indices)
+
+    if pretrained:
+        kwargs.setdefault('pretrained_strict', False)
 
     model = build_model_with_cfg(
         SwinTransformer, variant, pretrained,

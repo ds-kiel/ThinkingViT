@@ -92,7 +92,7 @@ python3 validate.py \
 
 ## 🎯 Training
 
-To train ThinkingViT, use the following code. The `args.yaml` file contains all the parameters needed to train ThinkingViT. We train ThinkingViT on 2 A100 GPUs with a global batch size of `1024`. You can download the DeiT-Tiny checkpoint from [here](https://zenodo.org/records/15468060).
+To train ThinkingViT, use the following code. The `args.yaml` file contains all the parameters needed to train ThinkingViT. We train ThinkingViT on 2 A100 GPUs with a global batch size of `1024`. You can download the DeiT-Tiny checkpoint from [here](https://zenodo.org/records/17429320).
 
 ```bash
 ./distributed_train.sh 2 \
@@ -101,7 +101,6 @@ To train ThinkingViT, use the following code. The `args.yaml` file contains all 
   --initial-checkpoint [PATH_TO_PRETRAINED_CHECKPOINT] \
   --thinking_stages H1 H2
 ```
-
 
 
 ### Performance Metrics of `ThinkingViT 3H → 6H` Across Different Entropy Thresholds
@@ -130,6 +129,32 @@ Comparison of ThinkingViT and baselines on ImageNet-1K: We compare ThinkingViT w
   <img src="figures/gmacs_imagenet_val.png" width="45%">
   <img src="figures/throughput_imagenet_val.png" width="45%">
 </div>
+
+
+## 🌲 Swin Transformer Variant
+
+We also provide a Swin Transformer adaptation that reuses the progressive head scheduling defined in `swin_transformer.py`. 
+
+### Training
+
+```bash
+./distributed_train.sh 4 \
+  --config args_swin.yaml \
+  --pretrained
+```
+
+### Inference
+
+```bash
+torchrun validate_swin.py \
+  -m swin_small_patch4_window7_224 \
+  --checkpoint [CHECKPOINT_PATH] \
+  --data-dir [IMAGENET_DIR] \
+  -b 128 \
+  --use-ema \
+  --threshold 0.0
+```
+You can download pretrained checkpoints models [Zenodo](https://zenodo.org/records/17429320).
 
 
 ## Contributing
