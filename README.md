@@ -144,7 +144,7 @@ We also provide a Swin Transformer adaptation that reuses the progressive head s
 ### Training
 
 ```bash
-./distributed_train.sh 4 --config args_swin.yaml
+torchrun --nproc_per_node=4 train_swin.py --config args_swin.yaml
 ```
 
 ### Inference
