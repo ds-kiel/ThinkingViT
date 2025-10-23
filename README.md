@@ -141,6 +141,10 @@ Comparison of ThinkingViT and baselines on ImageNet-1K: We compare ThinkingViT w
 
 We also provide a Swin Transformer adaptation that reuses the progressive head scheduling defined in `swin_transformer.py`. 
 
+<div align="center">
+  <img src="figures/swin_accuracy_vs_gmacs.png" width="45%">
+</div>
+
 ### Training
 
 ```bash
