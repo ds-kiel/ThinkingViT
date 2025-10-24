@@ -471,12 +471,6 @@ def validate(args):
             print('GMACs:', 0.6 * (c_stage[0]/total_samples) + (0.6 + 1.25) * (c_stage[1]/total_samples) + (0.6 + 1.25 + 4.6) * (c_stage[2]/total_samples))
         else:
             print("No GMAC calculation available for thinking_stages:", args.thinking_stages)
-        # small_model_latancy = 1/10047.6 
-        # big_model_latancy = 1/4603.6 
-        # total_latancy = (c_stage[0]*small_model_latancy + c_stage[1]*(small_model_latancy + big_model_latancy))/(c_stage[0]+c_stage[1])
-        # total_throughput = 1/ total_latancy
-        # print(f"Model Throughput: {total_throughput} samples/sec")
-
 
     if real_labels is not None:
         # real labels mode replaces topk values at the end
