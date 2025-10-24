@@ -453,11 +453,7 @@ def validate(args):
         print(f"Average FLOPs per sample            : {avg_flops:>4.2f} GFLOPs")
         print(f"Total FLOPs for evaluated samples   : {total_flops:>4.2f} GFLOPs")
         print('---')
-        # small_model_latancy = 1/10047.6 
-        # big_model_latancy = 1/4603.6 
-        # total_latancy = (c_stage[0]*small_model_latancy + c_stage[1]*(small_model_latancy + big_model_latancy))/(c_stage[0]+c_stage[1])
-        # total_throughput = 1/ total_latancy
-        # print(f"Model Throughput: {total_throughput} samples/sec")
+
 
 
     if real_labels is not None:
