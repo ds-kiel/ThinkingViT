@@ -1,0 +1,59 @@
+algorithm_kwargs:
+  batch_size: 4
+  eval_freq: 4
+  num_epochs: 216
+  start_epoch: 0
+amp: false
+dataset_kwargs:
+  batch_size: 4
+  crop_size: 768
+  dataset: cityscapes
+  image_size: 1024
+  normalization: deit
+  num_workers: 10
+  split: train
+inference_kwargs:
+  im_size: 1024
+  window_size: 768
+  window_stride: 512
+log_dir: seg_base_think_linear_mask_cityscapes2
+net_kwargs:
+  backbone: deit_base_patch16_224
+  d_model: 768
+  decoder:
+    n_cls: 19
+    name: linear
+  distilled: false
+  drop_path_rate: 0.1
+  dropout: 0.0
+  image_size: !!python/tuple
+  - 768
+  - 768
+  n_cls: 19
+  n_heads: 12
+  n_layers: 12
+  normalization: deit
+  patch_size: 16
+  pretrained_path: /home/aho/rldeit/HydraViT.tar
+optimizer_kwargs:
+  clip_grad: null
+  epochs: 216
+  iter_max: 80352
+  iter_warmup: 0.0
+  lr: 0.01
+  min_lr: 1.0e-05
+  momentum: 0.9
+  opt: sgd
+  poly_power: 0.9
+  poly_step_size: 1
+  sched: polynomial
+  weight_decay: 0.0
+resume: false
+thinking_kwargs:
+  loss_weights: null
+  stages:
+  - 3
+  - 6
+  threshold: 0.5
+version: normal
+world_batch_size: 8
