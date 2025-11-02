@@ -24,7 +24,7 @@ This directory evaluates ThinkingViT for semantic segmentation by adapting the S
 python -m segm.eval.miou ThinkingViT_3_6_Segmenter_ade.pth.tar ade20k \
   --singlescale \
   --thinking-stages "3,6" \
-  --thinking-threshold $THRESHOLD$ \
+  --thinking-threshold [THRESHOLD]\
   --stage-flops "10.4, 42.2"
 ```
 
@@ -52,7 +52,7 @@ Multi-scale evaluation is available via `--multiscale`:
 python -m segm.eval.miou ThinkingViT_3_6_Segmenter_cityscapes.pth.tar cityscapes \
   --singlescale \
   --thinking-stages "3,6" \
-  --thinking-threshold $THRESHOLD$ \
+  --thinking-threshold [THRESHOLD]\
   --stage-flops "100, 343"
 ```
 
