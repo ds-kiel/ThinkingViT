@@ -33,7 +33,7 @@ python -m segm.eval.miou ThinkingViT_3_6_Segmenter_ade.pth.tar ade20k \
 Single-scale results:
 
 <div align="center">
-  <img src="figures/miou_vs_gmacs_ade.png" width="100%">
+  <img src="figures/miou_vs_gmacs_ade.png" width="50%">
 </div>
 
 
@@ -41,7 +41,7 @@ Single-scale results:
 
 Multi-scale evaluation is available via `--multiscale`:
 <div align="center">
-  <img src="figures/miou_vs_gmacs_ade_multiscale.png" width="100%">
+  <img src="figures/miou_vs_gmacs_ade_multiscale.png" width="50%">
 </div>
 ------
 
@@ -60,7 +60,7 @@ python -m segm.eval.miou ThinkingViT_3_6_Segmenter_cityscapes.pth.tar cityscapes
 Single-scale results:
 
 <div align="center">
-  <img src="figures/miou_vs_gmacs_cityspaces.png" width="100%">
+  <img src="figures/miou_vs_gmacs_cityspaces.png" width="50%">
 </div>
 
 ------
@@ -68,5 +68,5 @@ Single-scale results:
 Multi-scale evaluation is available via `--multiscale`:
 
 <div align="center">
-  <img src="figures/miou_vs_gmacs_cityscapes_multiscale.png" width="100%">
+  <img src="figures/miou_vs_gmacs_cityscapes_multiscale.png" width="50%">
 </div>
