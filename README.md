@@ -15,6 +15,7 @@ Vision Transformers deliver state-of-the-art performance, yet their fixed comput
 
 - **Update 24.10.2025**: Added Swin Transformer variant with its pretrained checkpoint.
 - **Update 2.11.2025**: Added semantic segmentation support (Segmenter + ThinkingViT).
+- **Update 2.11.2025**: Added implementation combining ThinkingViT and DynamicViT (Segmenter + DynamicViT).
 
 
 ## 📦 Quick Start
@@ -31,7 +32,7 @@ pip install -r requirements.txt
 
 ### 📦 Pretrained Checkpoints
 
-We provide a set of pretrained **ThinkingViT** checkpoints for all configurations reported in the paper. You can download all models from [Zenodo](https://zenodo.org/records/17504412).
+We provide a set of pretrained **ThinkingViT** checkpoints for all configurations reported in the paper. You can download all models from [Zenodo](https://zenodo.org/records/17507118).
 
 #### ✅ Available Configurations:
 - `2H → 3H`

@@ -9,7 +9,7 @@
 
 - Environment: Follow the setup instructions from the official DynamicViT repository: https://github.com/raoyongming/DynamicViT
 
-- Checkpoints: Download the pretrained weights from https://zenodo.org/records/17504412
+- Checkpoints: Download the pretrained weights from https://zenodo.org/records/17507118
 
 ## Evaluation
 

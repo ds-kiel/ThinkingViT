@@ -14,7 +14,7 @@ This directory evaluates ThinkingViT for semantic segmentation by adapting the S
   ```
 
 - **Checkpoints**  
-  Download the ADE20K and Cityscapes checkpoints for ThinkingViT Segmenter here and place it in the corresponding directory: https://zenodo.org/records/17504412
+  Download the ADE20K and Cityscapes checkpoints for ThinkingViT Segmenter here and place it in the corresponding directory: https://zenodo.org/records/17507118
 
 ## Evaluation
 
