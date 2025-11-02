@@ -14,8 +14,8 @@ Vision Transformers deliver state-of-the-art performance, yet their fixed comput
 ## 🗓️ Updates
 
 - **Update 24.10.2025**: Added Swin Transformer variant with its pretrained checkpoint.
-- **Update 2.11.2025**: Added semantic segmentation support (Segmenter + ThinkingViT).
-- **Update 2.11.2025**: Added implementation combining ThinkingViT and DynamicViT (Segmenter + DynamicViT).
+- **Update 2.11.2025**: Added semantic segmentation support (ThinkingViT + Segmenter).
+- **Update 2.11.2025**: Added implementation combining ThinkingViT and DynamicViT (ThinkingViT + DynamicViT).
 
 
 ## 📦 Quick Start
