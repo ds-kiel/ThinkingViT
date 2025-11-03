@@ -5,3 +5,9 @@
 env/
 *.log
 __pycache__/
+
+segmentation/plot.py
+segmentation/segmaps/
+segmentation/segmaps_1_rounds/
+segmentation/segmaps_2_rounds/
+segmentation/segmaps_combined/

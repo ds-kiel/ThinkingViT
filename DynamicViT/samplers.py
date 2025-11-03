@@ -1,5 +1,16 @@
 # Copyright (c) 2015-present, Facebook, Inc.
 # All rights reserved.
+
+# Modified from the DynamicViT paper implementation
+
+# Copyright 2024 Kiel University
+#
+# This source code is licensed under the MIT license found in the
+# LICENSE file in the root directory of this source tree.
+# 
+# Modifications:
+# - Adjusted training loop to support the thinking approach
+
 import torch
 import torch.distributed as dist
 import math

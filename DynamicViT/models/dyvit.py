@@ -17,6 +17,17 @@ paper `DeiT: Data-efficient Image Transformers` - https://arxiv.org/abs/2012.128
 
 Hacked together by / Copyright 2020 Ross Wightman
 """
+
+# Modified from the DynamicViT paper implementation
+
+# Copyright 2024 Kiel University
+#
+# This source code is licensed under the MIT license found in the
+# LICENSE file in the root directory of this source tree.
+# 
+# Modifications:
+# - Adjusted training loop to support the thinking approach
+
 import math
 import logging
 import numbers
