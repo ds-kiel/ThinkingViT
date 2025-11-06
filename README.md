@@ -14,8 +14,7 @@ Vision Transformers deliver state-of-the-art performance, yet their fixed comput
 ## 🗓️ Updates
 
 - **Update 24.10.2025**: Added Swin Transformer variant with its pretrained checkpoint.
-- **Update 2.11.2025**: Added semantic segmentation support (ThinkingViT + Segmenter).
-- **Update 2.11.2025**: Added implementation combining ThinkingViT and DynamicViT (ThinkingViT + DynamicViT).
+- **TODO**: Add semantic segmentation support.
 
 
 ## 📦 Quick Start
@@ -32,7 +31,7 @@ pip install -r requirements.txt
 
 ### 📦 Pretrained Checkpoints
 
-We provide a set of pretrained **ThinkingViT** checkpoints for all configurations reported in the paper. You can download all models from [Zenodo](https://zenodo.org/records/17507118).
+We provide a set of pretrained **ThinkingViT** checkpoints for all configurations reported in the paper. You can download all models from [Zenodo](https://zenodo.org/records/15468060).
 
 #### ✅ Available Configurations:
 - `2H → 3H`
@@ -146,6 +145,25 @@ We also provide a Swin Transformer adaptation that reuses the progressive head s
   <img src="figures/swin_accuracy_vs_gmacs.png" width="45%">
 </div>
 
+-----
+
+| **Entropy Threshold** | **Accuracy [%]** | **GMACs** |
+|-----------------------|------------------|-----------|
+| 0.00                  | 83.512           | 11.500    |
+| 0.10                  | 83.512           | 9.460     |
+| 0.30                  | 83.480           | 7.610     |
+| 0.50                  | 83.382           | 6.680     |
+| 0.70                  | 83.166           | 5.910     |
+| 0.90                  | 82.512           | 5.140     |
+| 1.10                  | 81.694           | 4.550     |
+| 1.13                  | 81.548           | 4.470     |
+| 1.30                  | 80.878           | 4.070     |
+| 1.60                  | 79.744           | 3.500     |
+| 1.90                  | 78.746           | 3.060     |
+| 2.50                  | 77.990           | 2.800     |
+| 5.00                  | 77.990           | 2.800     |
+| 10.00                 | 77.990           | 2.800     |
+
 ### Training
 
 ```bash
@@ -163,6 +181,8 @@ torchrun validate_swin.py \
   --use-ema \
   --threshold [CONFIDENCE_THRESHOLD]
 ```
+
+
 You can download pretrained checkpoints models [Zenodo](https://zenodo.org/records/17429320).
 
 
