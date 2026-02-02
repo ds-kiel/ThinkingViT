@@ -5,7 +5,10 @@
 env/
 *.log
 __pycache__/
-
+job.sh
+*.err
+*.out
+output/
 segmentation/plot.py
 segmentation/segmaps/
 segmentation/segmaps_1_rounds/

@@ -26,7 +26,7 @@ from torch.nn.parameter import Parameter
 
 from segm.model.utils import init_weights, resize_pos_embed
 from timm.models.layers import DropPath, trunc_normal_
-from timm.models.vision_transformer import _load_weights
+from timm.models.thinkingvit_vision_transformer import _load_weights
 
 
 class Identity(nn.Module):

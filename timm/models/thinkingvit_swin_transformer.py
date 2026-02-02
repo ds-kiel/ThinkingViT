@@ -32,7 +32,7 @@ from ._features_fx import register_notrace_function
 from ._manipulate import checkpoint_seq, named_apply
 from torch.distributions import Categorical
 from ._registry import generate_default_cfgs, register_model, register_model_deprecations
-from .vision_transformer import get_init_weights_vit
+from .thinkingvit_vision_transformer import get_init_weights_vit
 
 __all__ = ['SwinTransformer']  # model_registry will add each entrypoint fn to this
 
@@ -1084,6 +1084,14 @@ def swin_tiny_patch4_window7_224(pretrained=False, **kwargs) -> SwinTransformer:
 def swin_small_patch4_window7_224(pretrained=False, **kwargs) -> SwinTransformer:
     """ Swin-S @ 224x224
     """
+    model_args = dict(patch_size=4, window_size=7, embed_dim=96, depths=(2, 2, 18, 2), num_heads=(3, 6, 12, 24))
+    return _create_swin_transformer(
+        'swin_small_patch4_window7_224', pretrained=pretrained, **dict(model_args, **kwargs))
+
+
+# Alias for the ThinkingViT Swin variant; same backbone/config, lowercase naming.
+@register_model
+def thinkingvit_swin_small_patch4_window7_224(pretrained=False, **kwargs) -> SwinTransformer:
     model_args = dict(patch_size=4, window_size=7, embed_dim=96, depths=(2, 2, 18, 2), num_heads=(3, 6, 12, 24))
     return _create_swin_transformer(
         'swin_small_patch4_window7_224', pretrained=pretrained, **dict(model_args, **kwargs))

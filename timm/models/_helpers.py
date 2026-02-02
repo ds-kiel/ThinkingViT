@@ -7,6 +7,7 @@ import os
 from collections import OrderedDict
 from typing import Any, Callable, Dict, Optional, Union
 
+import pickle
 import torch
 try:
     import safetensors.torch
@@ -39,7 +40,13 @@ def load_state_dict(
             assert _has_safetensors, "`pip install safetensors` to use .safetensors"
             checkpoint = safetensors.torch.load_file(checkpoint_path, device=device)
         else:
-            checkpoint = torch.load(checkpoint_path, map_location=device)
+            try:
+                checkpoint = torch.load(checkpoint_path, map_location=device)
+            except pickle.UnpicklingError:
+                # PyTorch 2.6 switched torch.load default to weights_only=True; older checkpoints
+                # saved entire argparse.Namespace objects. Retry with weights_only=False, which is
+                # safe if the checkpoint source is trusted (as for local training runs).
+                checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
 
         state_dict_key = ''
         if isinstance(checkpoint, dict):
@@ -146,5 +153,3 @@ def resume_checkpoint(
     else:
         _logger.error("No checkpoint found at '{}'".format(checkpoint_path))
         raise FileNotFoundError()
-
-

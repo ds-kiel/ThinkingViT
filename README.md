@@ -62,7 +62,7 @@ python3 validate.py \
 
 ```bash
 python3 validate.py \
-  -m deit_base_patch16_224 \
+  -m thinkingvit_deit_base_patch16_224 \
   --checkpoint /path/to/ThinkingViT_3_6.pth.tar \
   --data-dir IMAGENET_DIR \
   -b 2048 \
@@ -75,7 +75,7 @@ python3 validate.py \
 
 ```bash
 python3 validate.py \
-  -m deit_base_patch16_224 \
+  -m thinkingvit_deit_base_patch16_224 \
   --checkpoint /path/to/ThinkingViT_3_6_12.pth.tar \
   --data-dir IMAGENET_DIR \
   -b 2048 \
@@ -86,7 +86,7 @@ python3 validate.py \
 
 ## 📌 Parameter Explanation
 
-* `-m`: Specify ViT architecture (e.g., `deit_base_patch16_224`).
+* `-m`: Specify ViT architecture (recommended aliases: `thinkingvit_deit_base_patch16_224` or `thinkingvit_swin_small_patch4_window7_224`).
 * `--checkpoint`: Path to pretrained ThinkingViT model.
 * `--data-dir`: Path to the ImageNet.
 * `-b`: Batch size for inference.
@@ -174,7 +174,7 @@ torchrun --nproc_per_node=4 train_swin.py --config args_swin.yaml
 
 ```bash
 torchrun validate_swin.py \
-  -m swin_small_patch4_window7_224 \
+  -m thinkingvit_swin_small_patch4_window7_224 \
   --checkpoint [CHECKPOINT_PATH] \
   --data-dir [IMAGENET_DIR] \
   -b 128 \

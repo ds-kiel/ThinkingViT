@@ -18,7 +18,7 @@ from torch import nn as nn
 
 from timm.data import IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD
 from timm.layers import resample_abs_pos_embed
-from timm.models.vision_transformer import VisionTransformer, trunc_normal_, checkpoint_filter_fn
+from timm.models.thinkingvit_vision_transformer import VisionTransformer, trunc_normal_, checkpoint_filter_fn
 from ._builder import build_model_with_cfg
 from ._manipulate import checkpoint_seq
 from ._registry import generate_default_cfgs, register_model, register_model_deprecations
@@ -266,6 +266,15 @@ def deit_base_patch16_224(pretrained=False, **kwargs) -> VisionTransformer:
     ImageNet-1k weights from https://github.com/facebookresearch/deit.
     """
     model_args = dict(patch_size=16, embed_dim=768, depth=12, num_heads=12)
+    model = _create_deit('deit_base_patch16_224', pretrained=pretrained, **dict(model_args, **kwargs))
+    return model
+
+
+@register_model
+def thinkingvit_deit_base_patch16_224(pretrained=False, **kwargs) -> VisionTransformer:
+    """Alias for ThinkingViT using the DeiT-Base backbone (224×224)."""
+    model_args = dict(patch_size=16, embed_dim=768, depth=12, num_heads=12)
+    # Keep the same variant string so cfgs/checkpoints resolve identically.
     model = _create_deit('deit_base_patch16_224', pretrained=pretrained, **dict(model_args, **kwargs))
     return model
 
