@@ -83,7 +83,6 @@ torchrun --nproc_per_node=4 train_swin.py \
   --head-round-2 3 6 12 24
 ```
 
-This uses the built-in Swin-S pretrained checkpoint from timm. For `swin_small_patch4_window7_224`, the default pretrained weights are the ImageNet-22K pretrained and ImageNet-1K fine-tuned Swin-S checkpoint. Use `swin_small_patch4_window7_224.ms_in1k` if you want the ImageNet-1K-only pretrained checkpoint.
 
 The same command is available as a Slurm job:
 
