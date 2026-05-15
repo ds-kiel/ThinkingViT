@@ -627,6 +627,7 @@ class VisionTransformer(nn.Module):
             act_layer: Optional[LayerType] = None,
             block_fn: Type[nn.Module] = Block,
             mlp_layer: Type[nn.Module] = Mlp,
+            thinking_stages: Optional[Sequence[int]] = None,
     ) -> None:
         """
         Args:
@@ -662,10 +663,13 @@ class VisionTransformer(nn.Module):
         use_fc_norm = global_pool == 'avg' if fc_norm is None else fc_norm
         norm_layer = get_norm_layer(norm_layer) or partial(LayerNorm, eps=1e-6)
         act_layer = get_act_layer(act_layer) or nn.GELU
+        assert embed_dim % num_heads == 0, 'embed_dim should be divisible by num_heads'
 
         self.num_classes = num_classes
         self.global_pool = global_pool
         self.num_features = self.embed_dim = embed_dim  # num_features for consistency with other models
+        self.num_heads = num_heads
+        self.head_dim = embed_dim // num_heads
         self.num_prefix_tokens = 1 if class_token else 0
         # self.num_prefix_tokens += reg_tokens
         # self.num_prompt_tokens = 5
@@ -746,9 +750,33 @@ class VisionTransformer(nn.Module):
 
         #-----#
         self.p = 1.0
-        # self.proj_cls = nn.Linear(192, 384)
-        # self.alpha = nn.ParameterList([nn.Parameter(torch.zeros(1)) for _ in range(12)])
+        self.thinking_stages = tuple(int(s) for s in thinking_stages) if thinking_stages is not None else ()
+        self.alpha = nn.ParameterList([
+            nn.Parameter(torch.zeros(1)) for _ in range(max(0, len(self.thinking_stages) - 1))
+        ])
+        if len(self.thinking_stages) >= 2:
+            self.proj_layer = nn.Linear(self.thinking_stages[0] * self.head_dim, self.embed_dim)
+        if len(self.thinking_stages) >= 3:
+            self.proj_layer2 = nn.Linear(self.thinking_stages[1] * self.head_dim, self.embed_dim)
         #-----#
+
+    def _resolve_thinking_stages(self, thinking_stages=None) -> Tuple[int, ...]:
+        stages = thinking_stages if thinking_stages is not None else self.thinking_stages
+        stages = tuple(int(s) for s in stages)
+        if len(stages) not in (2, 3):
+            raise ValueError(f'thinking_stages must contain 2 or 3 stages, got {stages}')
+        if max(stages) > self.num_heads:
+            raise ValueError(
+                f'thinking_stages max ({max(stages)}) cannot exceed model num_heads ({self.num_heads})'
+            )
+        return stages
+
+    def _stage_ratio(self, stage_heads: int) -> float:
+        return int(stage_heads) / self.num_heads
+
+    def _stage_dim(self, stage_heads: int) -> int:
+        return int(stage_heads) * self.head_dim
+
     def fix_init_weight(self):
         def rescale(param, _layer_id):
             param.div_(math.sqrt(2.0 * _layer_id))
@@ -886,6 +914,7 @@ class VisionTransformer(nn.Module):
         return tuple(outputs)
 
     def forward_features(self, x, p, x_out_prev = None, thinking_stages=None) -> torch.Tensor:#-----#
+        thinking_stages = self._resolve_thinking_stages(thinking_stages)
         x = self.patch_embed(x)
         x = self._pos_embed(x)
         x = self.patch_drop(x)
@@ -896,10 +925,10 @@ class VisionTransformer(nn.Module):
                 x = x + self.alpha[0]*self.proj_layer(x_out_prev)
 
             if len(thinking_stages) == 3:
-                if x_out_prev.shape[-1] == int(thinking_stages[0])*64:
+                if x_out_prev.shape[-1] == self._stage_dim(thinking_stages[0]):
                     x = x + self.alpha[0]*self.proj_layer(x_out_prev)
 
-                if x_out_prev.shape[-1] == int(thinking_stages[1])*64:
+                if x_out_prev.shape[-1] == self._stage_dim(thinking_stages[1]):
                     x = x + self.alpha[1]*self.proj_layer2(x_out_prev)
             
         if self.grad_checkpointing and not torch.jit.is_scripting():
@@ -919,18 +948,19 @@ class VisionTransformer(nn.Module):
 
 
     def forward(self, x: torch.Tensor, threshold=None, thinking_stages=None, train_val=False) -> torch.Tensor:
+        thinking_stages = self._resolve_thinking_stages(thinking_stages)
         # main train
         if self.training:
-            p = self.p = int(thinking_stages[0]) / 12
+            p = self.p = self._stage_ratio(thinking_stages[0])
             x_out_stage_0 = self.forward_features(x, p)
             logits_stage_0 = self.forward_head(x_out_stage_0)
 
-            p = self.p = int(thinking_stages[1]) / 12
+            p = self.p = self._stage_ratio(thinking_stages[1])
             x_out_stage_1 = self.forward_features(x, p, x_out_stage_0, thinking_stages)
             logits_stage_1 = self.forward_head(x_out_stage_1)
 
             if len(thinking_stages) == 3:
-                p = self.p = int(thinking_stages[2]) / 12
+                p = self.p = self._stage_ratio(thinking_stages[2])
                 x_out_stage_2 = self.forward_features(x, p, x_out_stage_1, thinking_stages)
                 logits_stage_2 = self.forward_head(x_out_stage_2)
                 return logits_stage_0, logits_stage_1, logits_stage_2
@@ -940,43 +970,43 @@ class VisionTransformer(nn.Module):
 
         elif train_val: # for the validate function of train.py
             if len(thinking_stages) == 2: # for 2 stages
-                if self.p == thinking_stages[0]/12:
-                    p = self.p = int(thinking_stages[0]) / 12
+                if self.p == self._stage_ratio(thinking_stages[0]):
+                    p = self.p = self._stage_ratio(thinking_stages[0])
                     x_out_stage_0 = self.forward_features(x, p)
                     logits_stage_0 = self.forward_head(x_out_stage_0)
                     return logits_stage_0
                 else:
-                    p = self.p = int(thinking_stages[0]) / 12
+                    p = self.p = self._stage_ratio(thinking_stages[0])
                     x_out_stage_0 = self.forward_features(x, p)
 
-                    p = self.p = int(thinking_stages[1]) / 12
+                    p = self.p = self._stage_ratio(thinking_stages[1])
                     x_out_stage_1 = self.forward_features(x, p, x_out_stage_0, thinking_stages)
                     logits_stage_1 = self.forward_head(x_out_stage_1)
                     return logits_stage_1
         
             if len(thinking_stages) == 3: # for 3 stages
-                if self.p == thinking_stages[0]/12:
-                    p = self.p = int(thinking_stages[0]) / 12
+                if self.p == self._stage_ratio(thinking_stages[0]):
+                    p = self.p = self._stage_ratio(thinking_stages[0])
                     x_out_stage_0 = self.forward_features(x, p)
                     logits_stage_0 = self.forward_head(x_out_stage_0)
                     return logits_stage_0
 
-                elif self.p == thinking_stages[1]/12:
-                    p = self.p = int(thinking_stages[0]) / 12
+                elif self.p == self._stage_ratio(thinking_stages[1]):
+                    p = self.p = self._stage_ratio(thinking_stages[0])
                     x_out_stage_0 = self.forward_features(x, p)
 
-                    p = self.p = int(thinking_stages[1]) / 12
+                    p = self.p = self._stage_ratio(thinking_stages[1])
                     x_out_stage_1 = self.forward_features(x, p, x_out_stage_0, thinking_stages)
                     logits_stage_1 = self.forward_head(x_out_stage_1)
                     return logits_stage_1
                 else:
-                    p = self.p = int(thinking_stages[0]) / 12
+                    p = self.p = self._stage_ratio(thinking_stages[0])
                     x_out_stage_0 = self.forward_features(x, p)
 
-                    p = self.p = int(thinking_stages[1]) / 12
+                    p = self.p = self._stage_ratio(thinking_stages[1])
                     x_out_stage_1 = self.forward_features(x, p, x_out_stage_0, thinking_stages)
 
-                    p = self.p = int(thinking_stages[2]) / 12
+                    p = self.p = self._stage_ratio(thinking_stages[2])
                     x_out_stage_2 = self.forward_features(x, p, x_out_stage_1, thinking_stages)
                     logits_stage_2 = self.forward_head(x_out_stage_2)
                     return logits_stage_2
@@ -985,12 +1015,12 @@ class VisionTransformer(nn.Module):
         elif not train_val:  #### validate.py
 
             if len(thinking_stages) == 2:
-                p = self.p = int(thinking_stages[0]) / 12
+                p = self.p = self._stage_ratio(thinking_stages[0])
                 x_out_stage_0 = self.forward_features(x, p)
                 logits_stage_0 = self.forward_head(x_out_stage_0)
                 entropy_stage_0 = self.entropy(logits_stage_0)
 
-                p = self.p = int(thinking_stages[1]) / 12
+                p = self.p = self._stage_ratio(thinking_stages[1])
                 x_out_stage_1 = self.forward_features(x, p, x_out_stage_0, thinking_stages)
                 logits_stage_1 = self.forward_head(x_out_stage_1)
 
@@ -1000,17 +1030,17 @@ class VisionTransformer(nn.Module):
 
 
             if len(thinking_stages) == 3:
-                p = self.p = int(thinking_stages[0]) / 12
+                p = self.p = self._stage_ratio(thinking_stages[0])
                 x_out_stage_0 = self.forward_features(x, p)
                 logits_stage_0 = self.forward_head(x_out_stage_0)
                 entropy_stage_0 = self.entropy(logits_stage_0)
 
-                p = self.p = int(thinking_stages[1]) / 12
+                p = self.p = self._stage_ratio(thinking_stages[1])
                 x_out_stage_1 = self.forward_features(x, p, x_out_stage_0, thinking_stages)
                 logits_stage_1 = self.forward_head(x_out_stage_1)
                 entropy_stage_1 = self.entropy(logits_stage_1)
 
-                p = self.p = int(thinking_stages[2]) / 12
+                p = self.p = self._stage_ratio(thinking_stages[2])
                 x_out_stage_2 = self.forward_features(x, p, x_out_stage_1, thinking_stages)
                 logits_stage_2 = self.forward_head(x_out_stage_2)
 
@@ -1019,8 +1049,8 @@ class VisionTransformer(nn.Module):
                 mask_stage_1 = ~mask_stage_0 & (entropy_stage_1 < threshold)
 
                 output_logits = logits_stage_2.clone()
-                output_logits = torch.where(mask_stage_0.repeat(1, 1000), logits_stage_0, output_logits)
-                output_logits = torch.where(mask_stage_1.repeat(1, 1000), logits_stage_1, output_logits)
+                output_logits = torch.where(mask_stage_0.repeat(1, logits_stage_2.shape[-1]), logits_stage_0, output_logits)
+                output_logits = torch.where(mask_stage_1.repeat(1, logits_stage_2.shape[-1]), logits_stage_1, output_logits)
 
                 mask = torch.where(
                     mask_stage_0, 
@@ -1045,7 +1075,9 @@ class VisionTransformer(nn.Module):
         
         keep_shape = int(self.p*self.embed_dim) #-----#
         x = self.head_drop(x)
-        return x if pre_logits else self.head(x,  keep_shape, 1000) #-----#
+        if pre_logits or isinstance(self.head, nn.Identity):
+            return x
+        return self.head(x, keep_shape, self.num_classes) #-----#
 
 def init_weights_vit_timm(module: nn.Module, name: str = '') -> None:
     """ ViT weight initialization, original timm impl (for reproducibility) """
@@ -1422,6 +1454,7 @@ def _cfg(url: str = '', **kwargs) -> Dict[str, Any]:
     }
 
 default_cfgs = {
+    'thinkingvit': _cfg(mean=IMAGENET_DEFAULT_MEAN, std=IMAGENET_DEFAULT_STD),
 
     # re-finetuned augreg 21k FT on in1k weights
     'vit_base_patch16_224.augreg2_in21k_ft_in1k': _cfg(
@@ -2127,6 +2160,24 @@ def _create_vision_transformer(variant: str, pretrained: bool = False, **kwargs)
         pretrained_strict=strict,
         **kwargs,
     )
+
+
+@register_model
+def thinkingvit(pretrained: bool = False, **kwargs) -> VisionTransformer:
+    """ ThinkingViT with width derived from the largest requested thinking stage. """
+    thinking_stages = tuple(int(s) for s in kwargs.get('thinking_stages', (3, 6)))
+    if not thinking_stages:
+        raise ValueError('thinking_stages must not be empty')
+    max_heads = max(thinking_stages)
+    model_args = dict(
+        patch_size=16,
+        embed_dim=64 * max_heads,
+        depth=12,
+        num_heads=max_heads,
+        thinking_stages=thinking_stages,
+    )
+    model = _create_vision_transformer('thinkingvit', pretrained=pretrained, **dict(model_args, **kwargs))
+    return model
 
 
 @register_model

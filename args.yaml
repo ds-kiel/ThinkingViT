@@ -1,5 +1,4 @@
 epochs: 300
-model: deit_base_patch16_224
 
 aa: rand-m9-mstd0.5-inc1
 amp: false

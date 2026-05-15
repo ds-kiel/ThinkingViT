@@ -641,6 +641,7 @@ class SwinTransformer(nn.Module):
             embed_layer: Callable = PatchEmbed,
             norm_layer: Union[str, Callable] = nn.LayerNorm,
             weight_init: str = '',
+            head_rounds: Optional[Tuple[Tuple[int, ...], ...]] = None,
             **kwargs,
     ):
         """
@@ -743,13 +744,10 @@ class SwinTransformer(nn.Module):
             drop_rate=drop_rate,
             pool_type=global_pool,
         )
-        self.head_rounds: Tuple[Tuple[int, ...], Tuple[int, ...]] = (
-            (3, 3, 6, 12),
-            # (3, 6, 7, 24),
-            (3, 6, 12, 24),
-        )
-        self.max_heads = max(self.head_rounds[-1])
-        self.eval_stage_index = len(self.head_rounds) - 1
+        self.head_rounds: Tuple[Tuple[int, ...], ...] = ()
+        self.max_heads = max(self.stage_max_heads)
+        self.eval_stage_index = 0
+        self.set_head_rounds(head_rounds or ((3, 3, 6, 12), (3, 6, 12, 24)))
         self.debug_thinking = False
         if not hasattr(self, 'alpha'):
             self.alpha = nn.ParameterList([nn.Parameter(torch.zeros(1))])
@@ -791,6 +789,43 @@ class SwinTransformer(nn.Module):
     @torch.jit.ignore
     def enable_thinking_debug(self, enable: bool = True) -> None:
         self.debug_thinking = enable
+
+    @torch.jit.ignore
+    def set_head_rounds(self, head_rounds: Tuple[Tuple[int, ...], ...]) -> None:
+        rounds = tuple(tuple(int(heads) for heads in round_heads) for round_heads in head_rounds)
+        if len(rounds) != 2:
+            raise ValueError('Swin thinking currently supports exactly two head rounds.')
+
+        for round_idx, round_heads in enumerate(rounds):
+            if len(round_heads) != self.num_layers:
+                raise ValueError(
+                    f'Head round {round_idx} has {len(round_heads)} values, '
+                    f'but this Swin model has {self.num_layers} stages.'
+                )
+            for stage_idx, (heads, max_heads) in enumerate(zip(round_heads, self.stage_max_heads)):
+                if heads < 1 or heads > max_heads:
+                    raise ValueError(
+                        f'Invalid head count {heads} in round {round_idx}, stage {stage_idx}; '
+                        f'expected a value in [1, {max_heads}].'
+                    )
+
+        self.head_rounds = rounds
+        self.max_heads = max(max(round_heads) for round_heads in rounds)
+        self.eval_stage_index = min(getattr(self, 'eval_stage_index', len(rounds) - 1), len(rounds) - 1)
+
+    @torch.jit.ignore
+    def keep_dim_for_stage(self, stage_idx: int, heads: int) -> int:
+        stage_idx = stage_idx % self.num_layers
+        ratio = max(1, int(heads)) / self.stage_max_heads[stage_idx]
+        return max(1, int(round(self.stage_dims[stage_idx] * min(1.0, ratio))))
+
+    @torch.jit.ignore
+    def projector_dims(self) -> Tuple[int, int]:
+        if len(self.head_rounds) < 2:
+            raise ValueError('Projection requires at least two head rounds.')
+        in_channels = self.keep_dim_for_stage(self.num_layers - 1, self.head_rounds[0][-1])
+        out_channels = self.keep_dim_for_stage(0, self.head_rounds[1][0])
+        return in_channels, out_channels
 
     @torch.jit.ignore
     def get_classifier(self):
@@ -867,12 +902,12 @@ class SwinTransformer(nn.Module):
         p_schedule = [min(1.0, p) for p in p_schedule]
 
         x_tokens = self.patch_embed(x)
-        keep_dim0 = max(1, int(round(self.stage_dims[0] * p_schedule[0])))
+        keep_dim0 = self.keep_dim_for_stage(0, head_schedule[0])
         prev_keep_dim = prev_tokens.shape[-1] if prev_tokens is not None else None
         x_tokens = self._apply_round_input(x_tokens, prev_tokens, keep_dim0, prev_keep_dim)
         x_tokens = self._run_stages(x_tokens, head_schedule, p_schedule)
 
-        keep_dim_final = max(1, int(round(self.stage_dims[-1] * p_schedule[-1])))
+        keep_dim_final = self.keep_dim_for_stage(self.num_layers - 1, head_schedule[-1])
         x_tokens = self.norm(x_tokens, keep_shape=keep_dim_final)
         return x_tokens, keep_dim_final
 

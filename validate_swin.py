@@ -39,7 +39,8 @@ from timm.models import create_model, load_checkpoint, is_model, list_models
 from timm.utils import accuracy, AverageMeter, natural_key, setup_default_logging, set_jit_fuser, \
     decay_batch_step, check_batch_size_retry, ParseKwargs, reparameterize_model
 
-from train_swin import SwinTokenProjector
+from train_swin import SwinTokenProjector, apply_swin_head_rounds, swin_projector_dims
+from calc_swin_gmacs import calculate_round_gmacs
 
 try:
     from apex import amp
@@ -174,6 +175,44 @@ parser.add_argument('--valid-labels', default='', type=str, metavar='FILENAME',
 parser.add_argument('--retry', default=False, action='store_true',
                     help='Enable batch size decay & retry for single model validation')
 parser.add_argument('--threshold', default=6, type=float, help='threshold for entropy')
+parser.add_argument('--head-rounds', '--head_rounds', nargs='+', default=None,
+                    help='Swin thinking head counts. Examples: 3 3 6 12 3 6 12 24 or "(3,3,6,12)" "(3,6,12,24)"')
+parser.add_argument('--head-round-1', '--head_round_1', nargs='+', default=None,
+                    help='First Swin thinking round. Example: 3 3 6 12')
+parser.add_argument('--head-round-2', '--head_round_2', nargs='+', default=None,
+                    help='Second Swin thinking round. Example: 3 6 12 24')
+
+
+def _load_torch_checkpoint(checkpoint_path):
+    try:
+        return torch.load(checkpoint_path, map_location='cpu', weights_only=False)
+    except TypeError:
+        return torch.load(checkpoint_path, map_location='cpu')
+
+
+def _clean_state_dict_keys(state_dict):
+    return OrderedDict((k[7:] if k.startswith('module.') else k, v) for k, v in state_dict.items())
+
+
+def _extract_eval_state_dict(checkpoint, use_ema):
+    if isinstance(checkpoint, dict):
+        if use_ema and checkpoint.get('state_dict_ema', None) is not None:
+            return _clean_state_dict_keys(checkpoint['state_dict_ema']), 'state_dict_ema'
+        if use_ema and checkpoint.get('model_ema', None) is not None:
+            return _clean_state_dict_keys(checkpoint['model_ema']), 'model_ema'
+        for key in ('state_dict', 'model'):
+            if key in checkpoint:
+                return _clean_state_dict_keys(checkpoint[key]), key
+    return _clean_state_dict_keys(checkpoint), ''
+
+
+def _load_eval_checkpoint(model, checkpoint_path, use_ema):
+    checkpoint = _load_torch_checkpoint(checkpoint_path)
+    state_dict, state_dict_key = _extract_eval_state_dict(checkpoint, use_ema)
+    incompatible_keys = model.load_state_dict(state_dict, strict=True)
+    _logger.info("Loaded %s from checkpoint '%s'", state_dict_key, checkpoint_path)
+    return incompatible_keys
+
 
 def validate(args):
     # might as well try to validate something
@@ -228,11 +267,18 @@ def validate(args):
         **args.model_kwargs,
     )
 
-    if hasattr(model, 'head_rounds') and len(model.head_rounds) == 2:
+    configured_head_rounds = apply_swin_head_rounds(
+        model,
+        args.head_rounds,
+        args.head_round_1,
+        args.head_round_2,
+    )
+    if configured_head_rounds is not None and len(configured_head_rounds) == 2:
+        projector_in, projector_out = swin_projector_dims(model)
         model.alpha = nn.ParameterList([nn.Parameter(torch.zeros(1, device=device))])
         model.proj_layer = SwinTokenProjector(
-            in_channels=model.num_features,
-            out_channels=model.patch_embed.proj.out_channels,
+            in_channels=projector_in,
+            out_channels=projector_out,
             target_hw=model.patch_grid,
             source_hw=tuple(dim // (2 ** (len(model.layers) - 1)) for dim in model.patch_grid),
             device=device,
@@ -247,11 +293,10 @@ def validate(args):
         args.num_classes = model.num_classes
 
     if args.checkpoint:
-        # Allowlist argparse.Namespace for safe weights-only loading in PyTorch 2.6+
-        from torch.serialization import safe_globals
-        import argparse
-        with safe_globals([argparse.Namespace]):
+        if os.path.splitext(args.checkpoint)[-1].lower() in ('.npz', '.npy'):
             load_checkpoint(model, args.checkpoint, args.use_ema)
+        else:
+            _load_eval_checkpoint(model, args.checkpoint, args.use_ema)
 
     if args.reparam:
         model = reparameterize_model(model)
@@ -272,6 +317,27 @@ def validate(args):
     model = model.to(device)
     if args.channels_last:
         model = model.to(memory_format=torch.channels_last)
+
+    swin_incremental_gmacs = []
+    swin_projection_gmacs = []
+    if hasattr(model, 'head_rounds'):
+        try:
+            round_costs = calculate_round_gmacs(
+                model,
+                image_size=data_config['input_size'][-1],
+                batch_size=1,
+                device=device,
+            )
+            swin_incremental_gmacs = [macs / 1e9 for _, _, macs, _ in round_costs]
+            swin_projection_gmacs = [by_type.get('projection', 0) / 1e9 for _, _, _, by_type in round_costs]
+            _logger.info(
+                'Measured Swin incremental GMACs: %s',
+                ', '.join(f'{value:.4f}' for value in swin_incremental_gmacs),
+            )
+        except Exception as e:
+            _logger.warning('Could not measure Swin GMACs dynamically; falling back to legacy constants. Error: %s', e)
+    args.swin_incremental_gmacs = swin_incremental_gmacs
+    args.swin_projection_gmacs = swin_projection_gmacs
 
     if args.torchscript:
         assert not use_amp == 'apex', 'Cannot use APEX AMP with torchscripted model'
@@ -433,9 +499,12 @@ def validate(args):
         print('---')
         total_samples = sum(c_stage)
         total_samples = total_samples if total_samples > 0 else 1
-        incremental_costs = []
-        for idx in range(num_stages):
+        incremental_costs = list(getattr(args, 'swin_incremental_gmacs', []) or [])
+        projection_costs = list(getattr(args, 'swin_projection_gmacs', []) or [])
+        for idx in range(len(incremental_costs), num_stages):
             incremental_costs.append(2.8 if idx == 0 else 8.7)
+        for idx in range(len(projection_costs), num_stages):
+            projection_costs.append(0.0)
         cumulative_costs = list(accumulate(incremental_costs))
 
         total_flops = sum(c_stage[idx] * cumulative_costs[idx] for idx in range(num_stages))
@@ -447,7 +516,9 @@ def validate(args):
             stage_label = stage_heads[idx] if idx < len(stage_heads) else idx
             print(f"Stage {idx + 1} ({stage_label} heads) dispatched: {(dispatched/total_samples)*100:.2f}% ({dispatched}/{total_samples})")
             print(f"Stage {idx + 1} accuracy: {acc:.2f}% ({correct_stage[idx]}/{total_stage[idx]})")
-            print(f"Stage {idx + 1} FLOPs (cumulative)     : {cumulative_costs[idx]:>4.1f} GFLOPs")
+            print(f"Stage {idx + 1} FLOPs (incremental)    : {incremental_costs[idx]:>6.4f} GFLOPs")
+            print(f"Stage {idx + 1} projection FLOPs       : {projection_costs[idx]:>6.4f} GFLOPs")
+            print(f"Stage {idx + 1} FLOPs (cumulative)     : {cumulative_costs[idx]:>6.4f} GFLOPs")
             print('---')
 
         print(f"Average FLOPs per sample            : {avg_flops:>4.2f} GFLOPs")

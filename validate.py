@@ -86,8 +86,8 @@ parser.add_argument('--input-img-mode', default=None, type=str,
 parser.add_argument('--target-key', default=None, type=str,
                    help='Dataset key for target labels.')
 
-parser.add_argument('--model', '-m', metavar='NAME', default='dpn92',
-                    help='model architecture (default: dpn92)')
+parser.add_argument('--model', '-m', metavar='NAME', default='thinkingvit',
+                    help='model architecture (default: thinkingvit)')
 parser.add_argument('--pretrained', dest='pretrained', action='store_true',
                     help='use pre-trained model')
 parser.add_argument('-j', '--workers', default=4, type=int, metavar='N',
@@ -177,9 +177,47 @@ parser.add_argument('--threshold', default=6, type=float, help='threshold for en
 
 parser.add_argument('--thinking_stages', nargs='+', type=int, default=[3, 6], help='thinking_steps')
 
+def _normalize_thinkingvit_model_name(args):
+    if args.model.startswith('deit_'):
+        _logger.info('Using thinkingvit instead of configured DeiT model %s.', args.model)
+        args.model = 'thinkingvit'
+
+
+def _load_torch_checkpoint(checkpoint_path):
+    try:
+        return torch.load(checkpoint_path, map_location='cpu', weights_only=False)
+    except TypeError:
+        return torch.load(checkpoint_path, map_location='cpu')
+
+
+def _clean_state_dict_keys(state_dict):
+    return OrderedDict((k[7:] if k.startswith('module.') else k, v) for k, v in state_dict.items())
+
+
+def _extract_eval_state_dict(checkpoint, use_ema):
+    if isinstance(checkpoint, dict):
+        if use_ema and checkpoint.get('state_dict_ema', None) is not None:
+            return _clean_state_dict_keys(checkpoint['state_dict_ema']), 'state_dict_ema'
+        if use_ema and checkpoint.get('model_ema', None) is not None:
+            return _clean_state_dict_keys(checkpoint['model_ema']), 'model_ema'
+        for key in ('state_dict', 'model'):
+            if key in checkpoint:
+                return _clean_state_dict_keys(checkpoint[key]), key
+    return _clean_state_dict_keys(checkpoint), ''
+
+
+def _load_eval_checkpoint(model, checkpoint_path, use_ema):
+    checkpoint = _load_torch_checkpoint(checkpoint_path)
+    state_dict, state_dict_key = _extract_eval_state_dict(checkpoint, use_ema)
+    incompatible_keys = model.load_state_dict(state_dict, strict=True)
+    _logger.info("Loaded %s from checkpoint '%s'", state_dict_key, checkpoint_path)
+    return incompatible_keys
+
+
 def validate(args):
     # might as well try to validate something
-    args.pretrained = args.pretrained or not args.checkpoint
+    _normalize_thinkingvit_model_name(args)
+    args.pretrained = args.pretrained or (not args.checkpoint and args.model != 'thinkingvit')
     args.prefetcher = not args.no_prefetcher
 
     if torch.cuda.is_available():
@@ -227,21 +265,18 @@ def validate(args):
         in_chans=in_chans,
         global_pool=args.gp,
         scriptable=args.torchscript,
+        thinking_stages=args.thinking_stages,
         **args.model_kwargs,
     )
-    model.alpha = nn.ParameterList([nn.Parameter(torch.zeros(1)) for _ in range(12)])
-    model.proj_layer = nn.Linear(64*int(args.thinking_stages[0]), 768).to(device)
-
-    if len(args.thinking_stages) == 3:
-        model.proj_layer2 = nn.Linear(64*int(args.thinking_stages[1]), 768).to(device)
-
-    # model.alpha = nn.Parameter(torch.zeros(12)) 
     if args.num_classes is None:
         assert hasattr(model, 'num_classes'), 'Model must have `num_classes` attr if not set on cmd line/config.'
         args.num_classes = model.num_classes
 
     if args.checkpoint:
-        load_checkpoint(model, args.checkpoint, args.use_ema)
+        if os.path.splitext(args.checkpoint)[-1].lower() in ('.npz', '.npy'):
+            load_checkpoint(model, args.checkpoint, args.use_ema)
+        else:
+            _load_eval_checkpoint(model, args.checkpoint, args.use_ema)
 
     if args.reparam:
         model = reparameterize_model(model)
@@ -337,7 +372,7 @@ def validate(args):
 
     model.eval()
     #----**----#
-    RLDropping(model, used_heads=args.number_of_heads, max_heads=12, ema=False)
+    RLDropping(model, used_heads=args.number_of_heads, max_heads=max(args.thinking_stages), ema=False)
     #----**----# 
     with torch.no_grad():
         # warmup, reduce variability of first batch time, especially for comparing torchscript vs non
