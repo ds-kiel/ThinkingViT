@@ -108,27 +108,170 @@ class SwinTokenProjector(nn.Module):
         super().__init__()
         self.target_hw = tuple(int(v) for v in target_hw)
         self.source_hw = tuple(int(v) for v in source_hw)
+        self.in_channels = int(in_channels)
+        self.out_channels = int(out_channels)
+        if self.in_channels < 1 or self.out_channels < 1:
+            raise ValueError('Projector channel counts must be positive.')
         if any(t % s != 0 for t, s in zip(self.target_hw, self.source_hw)):
             raise ValueError(f"Target size {self.target_hw} must be an integer multiple of source size {self.source_hw}.")
         scale_h = self.target_hw[0] // self.source_hw[0]
         scale_w = self.target_hw[1] // self.source_hw[1]
         self.upsample = nn.ConvTranspose2d(
-            in_channels=384,
-            out_channels=384,
+            in_channels=self.in_channels,
+            out_channels=self.in_channels,
             kernel_size=(scale_h, scale_w),
             stride=(scale_h, scale_w),
-            groups=384,
+            groups=self.in_channels,
             bias=False,
         )
-        self.proj = nn.Conv2d(384, 96, kernel_size=1, bias=True)
+        self.proj = nn.Conv2d(self.in_channels, self.out_channels, kernel_size=1, bias=True)
         self.to(device)
 
     def forward(self, x: torch.Tensor, keep_dim_in: int, keep_dim_out: int) -> torch.Tensor:
+        if keep_dim_in != self.in_channels or keep_dim_out != self.out_channels:
+            raise ValueError(
+                f'Projector was built for {self.in_channels}->{self.out_channels} channels, '
+                f'but received {keep_dim_in}->{keep_dim_out}. Check --head-rounds.'
+            )
         x = x.permute(0, 3, 1, 2)
         x = self.upsample(x)
         x = self.proj(x)
         x = x.permute(0, 2, 3, 1)
         return x
+
+
+def _parse_head_group(values) -> Tuple[int, ...]:
+    if isinstance(values, int):
+        return (values,)
+    if isinstance(values, str):
+        cleaned = (
+            values.replace('(', ' ')
+            .replace(')', ' ')
+            .replace('[', ' ')
+            .replace(']', ' ')
+            .replace(',', ' ')
+        )
+        return tuple(int(v) for v in cleaned.split())
+    return tuple(int(v) for v in values)
+
+
+def _validate_swin_rounds(rounds: Tuple[Tuple[int, ...], ...], num_stages: int) -> Tuple[Tuple[int, ...], ...]:
+    if any(len(round_heads) != num_stages for round_heads in rounds):
+        raise ValueError(f'Each head round must contain {num_stages} values.')
+    if len(rounds) != 2:
+        raise ValueError('Swin thinking currently supports exactly two head rounds.')
+    return rounds
+
+
+def parse_swin_head_rounds(
+        head_rounds,
+        num_stages: int,
+        head_round_1=None,
+        head_round_2=None,
+) -> Optional[Tuple[Tuple[int, ...], ...]]:
+    if head_round_1 is not None or head_round_2 is not None:
+        if head_round_1 is None or head_round_2 is None:
+            raise ValueError('Pass both --head-round-1 and --head-round-2.')
+        rounds = (_parse_head_group(head_round_1), _parse_head_group(head_round_2))
+        return _validate_swin_rounds(rounds, num_stages)
+
+    if not head_rounds:
+        return None
+    if isinstance(head_rounds, str):
+        if ';' in head_rounds:
+            rounds = tuple(_parse_head_group(group) for group in head_rounds.split(';') if group.strip())
+            return _validate_swin_rounds(rounds, num_stages)
+        head_rounds = head_rounds.replace(',', ' ').split()
+    if isinstance(head_rounds, (list, tuple)) and head_rounds and isinstance(head_rounds[0], (list, tuple)):
+        rounds = tuple(tuple(int(v) for v in round_heads) for round_heads in head_rounds)
+        return _validate_swin_rounds(rounds, num_stages)
+
+    if isinstance(head_rounds, (list, tuple)):
+        grouped_rounds = tuple(_parse_head_group(group) for group in head_rounds)
+        if grouped_rounds and all(len(group) == num_stages for group in grouped_rounds):
+            return _validate_swin_rounds(grouped_rounds, num_stages)
+
+    flat_rounds = tuple(v for group in head_rounds for v in _parse_head_group(group))
+    if len(flat_rounds) % num_stages != 0:
+        raise ValueError(
+            f'--head-rounds received {len(flat_rounds)} values, but this Swin model has {num_stages} stages. '
+            f'Pass one group of {num_stages} values per round.'
+        )
+
+    rounds = tuple(
+        flat_rounds[idx:idx + num_stages]
+        for idx in range(0, len(flat_rounds), num_stages)
+    )
+    return _validate_swin_rounds(rounds, num_stages)
+
+
+def apply_swin_head_rounds(
+        model: nn.Module,
+        head_rounds,
+        head_round_1=None,
+        head_round_2=None,
+) -> Optional[Tuple[Tuple[int, ...], ...]]:
+    if not hasattr(model, 'head_rounds'):
+        return None
+    parsed_rounds = parse_swin_head_rounds(head_rounds, len(model.layers), head_round_1, head_round_2)
+    if parsed_rounds is not None:
+        if hasattr(model, 'set_head_rounds'):
+            model.set_head_rounds(parsed_rounds)
+        else:
+            model.head_rounds = parsed_rounds
+    return model.head_rounds
+
+
+def swin_projector_dims(model: nn.Module) -> Tuple[int, int]:
+    if hasattr(model, 'projector_dims'):
+        return model.projector_dims()
+
+    first_round, second_round = model.head_rounds[0], model.head_rounds[1]
+    in_ratio = first_round[-1] / model.stage_max_heads[-1]
+    out_ratio = second_round[0] / model.stage_max_heads[0]
+    in_channels = max(1, int(round(model.stage_dims[-1] * min(1.0, in_ratio))))
+    out_channels = max(1, int(round(model.stage_dims[0] * min(1.0, out_ratio))))
+    return in_channels, out_channels
+
+
+def _load_torch_checkpoint(checkpoint_path):
+    try:
+        return torch.load(checkpoint_path, map_location='cpu', weights_only=False)
+    except TypeError:
+        return torch.load(checkpoint_path, map_location='cpu')
+
+
+def _clean_state_dict_keys(state_dict):
+    return OrderedDict((k[7:] if k.startswith('module.') else k, v) for k, v in state_dict.items())
+
+
+def _extract_initial_state_dict(checkpoint):
+    if isinstance(checkpoint, dict):
+        for key in ('state_dict_ema', 'model_ema', 'state_dict', 'model'):
+            if key in checkpoint:
+                return _clean_state_dict_keys(checkpoint[key])
+    return _clean_state_dict_keys(checkpoint)
+
+
+def load_swin_initial_checkpoint(model: nn.Module, checkpoint_path: str):
+    checkpoint = _load_torch_checkpoint(checkpoint_path)
+    state_dict = _extract_initial_state_dict(checkpoint)
+    model_state = model.state_dict()
+    compatible_state = OrderedDict()
+    skipped = []
+
+    for name, value in state_dict.items():
+        target = model_state.get(name)
+        if target is None:
+            continue
+        if torch.is_tensor(value) and value.shape == target.shape:
+            compatible_state[name] = value
+        else:
+            skipped.append(name)
+
+    if skipped:
+        _logger.warning('Skipped %d incompatible initial-checkpoint tensors.', len(skipped))
+    return model.load_state_dict(compatible_state, strict=False)
 
 # The first arg parser parses out only the --config argument, this argument is used to
 # load a yaml file containing key-values that override the defaults for the main parser below
@@ -215,6 +358,12 @@ group.add_argument('--grad-checkpointing', action='store_true', default=False,
 group.add_argument('--fast-norm', default=False, action='store_true',
                    help='enable experimental fast-norm')
 group.add_argument('--model-kwargs', nargs='*', default={}, action=utils.ParseKwargs)
+group.add_argument('--head-rounds', '--head_rounds', nargs='+', default=None,
+                   help='Swin thinking head counts. Examples: 3 3 6 12 3 6 12 24 or "(3,3,6,12)" "(3,6,12,24)"')
+group.add_argument('--head-round-1', '--head_round_1', nargs='+', default=None,
+                   help='First Swin thinking round. Example: 3 3 6 12')
+group.add_argument('--head-round-2', '--head_round_2', nargs='+', default=None,
+                   help='Second Swin thinking round. Example: 3 6 12 24')
 group.add_argument('--head-init-scale', default=None, type=float,
                    help='Head initialization scale')
 group.add_argument('--head-init-bias', default=None, type=float,
@@ -539,17 +688,23 @@ def main():
         bn_momentum=args.bn_momentum,
         bn_eps=args.bn_eps,
         scriptable=args.torchscript,
-        checkpoint_path=args.initial_checkpoint,
         **factory_kwargs,
         **args.model_kwargs,
     )
     # Thinking setup (supports Swin two-stage flow and legacy ViT override)
-    if hasattr(model, 'head_rounds') and len(model.head_rounds) == 2:
+    configured_head_rounds = apply_swin_head_rounds(
+        model,
+        args.head_rounds,
+        args.head_round_1,
+        args.head_round_2,
+    )
+    if configured_head_rounds is not None and len(configured_head_rounds) == 2:
         thinking_schedule = [model.head_rounds[0][-1], model.head_rounds[1][-1]]
+        projector_in, projector_out = swin_projector_dims(model)
         model.alpha = nn.ParameterList([nn.Parameter(torch.zeros(1, device=device))])
         model.proj_layer = SwinTokenProjector(
-            in_channels=model.num_features,
-            out_channels=model.patch_embed.proj.out_channels,
+            in_channels=projector_in,
+            out_channels=projector_out,
             target_hw=model.patch_grid,
             source_hw=tuple(dim // (2 ** (len(model.layers) - 1)) for dim in model.patch_grid),
             device=device,
@@ -560,6 +715,9 @@ def main():
         model.proj_layer = nn.Linear(64 * thinking_schedule[0], 768).to(device)
 
     setattr(args, 'thinking_round_outputs', thinking_schedule)
+
+    if args.initial_checkpoint:
+        load_swin_initial_checkpoint(model, args.initial_checkpoint)
 
     if getattr(args, 'thinking_debug', False) and hasattr(model, 'enable_thinking_debug'):
         model.enable_thinking_debug(True)

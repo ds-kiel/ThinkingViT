@@ -3,9 +3,10 @@
 *.tar
 *.json
 env/
-*.log
 __pycache__/
-
+*.out
+*.err
+output/
 segmentation/plot.py
 segmentation/segmaps/
 segmentation/segmaps_1_rounds/

@@ -105,7 +105,7 @@ group = parser.add_argument_group('Dataset parameters')
 # Keep this argument outside the dataset group because it is positional.
 parser.add_argument('data', nargs='?', metavar='DIR', const=None,
                     help='path to dataset (positional is *deprecated*, use --data-dir)')
-parser.add_argument('--data-dir', metavar='DIR',
+parser.add_argument('--data-dir', '--data', dest='data_dir', metavar='DIR',
                     help='path to dataset (root dir)')
 parser.add_argument('--dataset', metavar='NAME', default='',
                     help='dataset type + name ("<type>/<name>") (default: ImageFolder or ImageTar if empty)')
@@ -130,8 +130,8 @@ group.add_argument('--target-key', default=None, type=str,
 
 # Model parameters
 group = parser.add_argument_group('Model parameters')
-group.add_argument('--model', default='resnet50', type=str, metavar='MODEL',
-                   help='Name of model to train (default: "resnet50")')
+group.add_argument('--model', default='thinkingvit', type=str, metavar='MODEL',
+                   help='Name of model to train (default: "thinkingvit")')
 group.add_argument('--pretrained', action='store_true', default=False,
                    help='Start with pretrained version of specified network (if avail)')
 group.add_argument('--pretrained-path', default=None, type=str,
@@ -402,6 +402,8 @@ group.add_argument('--experiment', default='', type=str, metavar='NAME',
                    help='name of train experiment, name of sub-folder for output')
 group.add_argument('--eval-metric', default='top1', type=str, metavar='EVAL_METRIC',
                    help='Best metric (default: "top1"')
+group.add_argument('--eval-every', default=1, type=int, metavar='N',
+                   help='Run validation every N epochs, and always on the final epoch (default: 1)')
 group.add_argument('--tta', type=int, default=0, metavar='N',
                    help='Test/inference time augmentation (oversampling) factor. 0=None (default: 0)')
 group.add_argument('--use-multi-epochs-loader', action='store_true', default=False,
@@ -428,9 +430,96 @@ def _parse_args():
     return args, args_text
 
 
+def _normalize_thinkingvit_model_name(args):
+    if args.model.startswith('deit_'):
+        _logger.info('Using thinkingvit instead of configured DeiT model %s.', args.model)
+        args.model = 'thinkingvit'
+
+
+def _filter_initial_checkpoint(state_dict, model):
+    skip_prefixes = ('alpha.', 'proj_layer.', 'proj_layer2.')
+    return {k: v for k, v in state_dict.items() if not k.startswith(skip_prefixes)}
+
+
+def _load_torch_checkpoint(checkpoint_path):
+    try:
+        return torch.load(checkpoint_path, map_location='cpu', weights_only=False)
+    except TypeError:
+        return torch.load(checkpoint_path, map_location='cpu')
+
+
+def _clean_state_dict_keys(state_dict):
+    return OrderedDict((k[7:] if k.startswith('module.') else k, v) for k, v in state_dict.items())
+
+
+def _extract_initial_state_dict(checkpoint):
+    if isinstance(checkpoint, dict):
+        for key in ('state_dict_ema', 'model_ema', 'state_dict', 'model'):
+            if key in checkpoint:
+                return _clean_state_dict_keys(checkpoint[key])
+    return _clean_state_dict_keys(checkpoint)
+
+
+def _crop_initial_tensor(name, value, target):
+    if not torch.is_tensor(value) or value.ndim != target.ndim:
+        return None
+    if any(source < dest for source, dest in zip(value.shape, target.shape)):
+        return None
+
+    if '.attn.qkv.' in name and value.shape[0] % 3 == 0 and target.shape[0] % 3 == 0:
+        source_dim = value.shape[0] // 3
+        target_dim = target.shape[0] // 3
+        chunks = [value[i * source_dim:i * source_dim + target_dim] for i in range(3)]
+        value = torch.cat(chunks, dim=0)
+        if value.ndim == 2:
+            value = value[:, :target.shape[1]]
+        return value.contiguous()
+
+    slices = tuple(slice(0, dim) for dim in target.shape)
+    return value[slices].contiguous()
+
+
+def _adapt_initial_checkpoint(state_dict, model):
+    state_dict = _filter_initial_checkpoint(state_dict, model)
+    model_state = model.state_dict()
+    adapted = OrderedDict()
+    cropped, skipped = [], []
+
+    for name, value in state_dict.items():
+        target = model_state.get(name)
+        if target is None:
+            continue
+        if torch.is_tensor(value) and value.shape == target.shape:
+            adapted[name] = value
+            continue
+        cropped_value = _crop_initial_tensor(name, value, target)
+        if cropped_value is not None and cropped_value.shape == target.shape:
+            adapted[name] = cropped_value
+            cropped.append(name)
+        else:
+            skipped.append(name)
+
+    if cropped:
+        _logger.info('Cropped %d initial-checkpoint tensors to match thinkingvit width.', len(cropped))
+    if skipped:
+        _logger.warning('Skipped %d incompatible initial-checkpoint tensors.', len(skipped))
+    return adapted
+
+
+def load_initial_checkpoint(model, checkpoint_path):
+    checkpoint = _load_torch_checkpoint(checkpoint_path)
+    state_dict = _extract_initial_state_dict(checkpoint)
+    state_dict = _adapt_initial_checkpoint(state_dict, model)
+    return model.load_state_dict(state_dict, strict=False)
+
+
 def main():
     utils.setup_default_logging()
     args, args_text = _parse_args()
+    _normalize_thinkingvit_model_name(args)
+    max_thinking_heads = max(args.thinking_stages)
+    args.eval_every = max(1, args.eval_every)
+    args_text = yaml.safe_dump(args.__dict__, default_flow_style=False)
     print(args)
     if args.device_modules:
         for module in args.device_modules:
@@ -499,16 +588,13 @@ def main():
         bn_momentum=args.bn_momentum,
         bn_eps=args.bn_eps,
         scriptable=args.torchscript,
-        checkpoint_path=args.initial_checkpoint,
+        thinking_stages=args.thinking_stages,
         **factory_kwargs,
         **args.model_kwargs,
     )
-    #----**----#               
-    model.alpha = nn.ParameterList([nn.Parameter(torch.zeros(1)) for _ in range(12)])
-    model.proj_layer = nn.Linear(64*int(args.thinking_stages[0]), 768).to(device)
-    if len(args.thinking_stages) == 3:
-        model.proj_layer2 = nn.Linear(64*int(args.thinking_stages[1]), 768).to(device)
-    #----**----#               
+    if args.initial_checkpoint:
+        load_initial_checkpoint(model, args.initial_checkpoint)
+
     total_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print(f"After freezing: Total number of trainable parameters: {total_params}\n")
 
@@ -881,8 +967,12 @@ def main():
                 dataset_train.set_epoch(epoch)
             elif args.distributed and hasattr(loader_train.sampler, 'set_epoch'):
                 loader_train.sampler.set_epoch(epoch)
-            if epoch ==0:
-                RLDropping(model,used_heads=int(args.thinking_stages[-1]), max_heads=12, ema=False)
+            eval_this_epoch = (
+                loader_eval is not None and
+                ((epoch + 1) % args.eval_every == 0 or epoch == num_epochs - 1)
+            )
+            if epoch == 0 and args.eval_every == 1 and loader_eval is not None:
+                RLDropping(model,used_heads=int(args.thinking_stages[0]), max_heads=max_thinking_heads, ema=False)
                 validate(
                         model,
                         loader_eval,
@@ -914,9 +1004,9 @@ def main():
                     _logger.info("Distributing BatchNorm running means and vars")
                 utils.distribute_bn(model, args.world_size, args.dist_bn == 'reduce')
 
-            if loader_eval is not None:
+            if eval_this_epoch:
                 #----**----#
-                RLDropping(model,used_heads=int(args.thinking_stages[-1]), max_heads=12, ema=False)
+                RLDropping(model,used_heads=int(args.thinking_stages[-1]), max_heads=max_thinking_heads, ema=False)
                 #----**----#
                 eval_metrics = validate(
                     model,
@@ -929,7 +1019,7 @@ def main():
                 )
 
                 # ----**----#
-                RLDropping(model, used_heads=int(args.thinking_stages[-2]), max_heads=12, ema=False)
+                RLDropping(model, used_heads=int(args.thinking_stages[-2]), max_heads=max_thinking_heads, ema=False)
                 validate(
                         model,
                         loader_eval,
@@ -941,7 +1031,7 @@ def main():
                         )
                 # ----**----#
                 if len(args.thinking_stages)==3:
-                    RLDropping(model, used_heads=int(args.thinking_stages[-3]), max_heads=12, ema=False)
+                    RLDropping(model, used_heads=int(args.thinking_stages[-3]), max_heads=max_thinking_heads, ema=False)
                     validate(
                             model,
                             loader_eval,
@@ -957,7 +1047,7 @@ def main():
                     if args.distributed and args.dist_bn in ('broadcast', 'reduce'):
                         utils.distribute_bn(model_ema, args.world_size, args.dist_bn == 'reduce')
                     #----**----#
-                    RLDropping(model_ema, used_heads=int(args.thinking_stages[-1]), max_heads=12, ema=True)
+                    RLDropping(model_ema, used_heads=int(args.thinking_stages[-1]), max_heads=max_thinking_heads, ema=True)
                     #----**----#
                     ema_eval_metrics = validate(
                         model_ema,
@@ -971,7 +1061,7 @@ def main():
                     eval_metrics = ema_eval_metrics
 
                     #----**----#
-                    RLDropping(model_ema,used_heads=int(args.thinking_stages[-2]), max_heads=12, ema=True)
+                    RLDropping(model_ema,used_heads=int(args.thinking_stages[-2]), max_heads=max_thinking_heads, ema=True)
                     validate(
                             model_ema,
                             loader_eval,
@@ -984,7 +1074,7 @@ def main():
 
                     #----**----#
                 if len(args.thinking_stages)==3:
-                    RLDropping(model_ema,used_heads=int(args.thinking_stages[-3]), max_heads=12, ema=True)
+                    RLDropping(model_ema,used_heads=int(args.thinking_stages[-3]), max_heads=max_thinking_heads, ema=True)
                     validate(
                             model_ema,
                             loader_eval,
@@ -1013,10 +1103,12 @@ def main():
 
             if eval_metrics is not None:
                 latest_metric = eval_metrics[eval_metric]
-            else:
+            elif eval_metric in train_metrics:
                 latest_metric = train_metrics[eval_metric]
+            else:
+                latest_metric = None
 
-            if saver is not None:
+            if saver is not None and latest_metric is not None:
                 # save proper checkpoint with eval metric
                 best_metric, best_epoch = saver.save_checkpoint(epoch, metric=latest_metric)
 
