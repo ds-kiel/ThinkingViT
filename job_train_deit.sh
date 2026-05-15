@@ -20,9 +20,18 @@ source /home/aho/envs/env/bin/activate
 
 
 
-./distributed_train.sh 4 --config args.yaml --model thinkingvit --eval-every 10 --batch-size 256 --data '/data22/datasets/ilsvrc2012/' --initial-checkpoint /home/aho/thinkingvit/tiny_in_base.pth.tar --thinking_stages 3 6 &> ThinkingViT.log
+# ./distributed_train.sh 4 --config args.yaml --model thinkingvit --eval-every 10 --batch-size 256 --data '/data22/datasets/ilsvrc2012/' --initial-checkpoint /home/aho/thinkingvit/tiny_in_base.pth.tar --thinking_stages 3 6 &> ThinkingViT.log
 
-
+./distributed_train.sh 4 \
+  --config args.yaml \
+  --model thinkingvit \
+  --eval-every 10 \
+  --batch-size 128 \
+  --grad-accum-steps 2 \
+  --data '/data22/datasets/ilsvrc2012/' \
+  --initial-checkpoint /home/aho/thinkingvit/tiny_in_base.pth.tar \
+  --thinking_stages 3 6 12 \
+  &> ThinkingViT_3_6_12.log
 
 
 jobinfo

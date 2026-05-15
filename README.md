@@ -2,9 +2,9 @@
 
 <div align="center">
 
-**CVPR 2026 Poster**
+***CVPR'2026 Main-Track Poster***
 
-**[📄 Paper: arXiv:2507.10800](https://arxiv.org/abs/2507.10800)** · **[📦 Checkpoints: Zenodo](https://zenodo.org/records/20207165)**
+**[📄 Paper: arXiv:2507.10800](https://arxiv.org/abs/2507.10800)** · **[📦 Model weights: Zenodo](https://zenodo.org/records/20207165)**
 
 </div>
 
