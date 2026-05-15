@@ -1,0 +1,43 @@
+Validating in float32. AMP not enabled.
+Loaded state_dict_ema from checkpoint '/home/aho/ThinkingViTCVPR/ThinkingViT/ThinkingViT_re_3_6.pth.tar'
+Model thinkingvit created, param count: 22124777
+Data processing configuration for current model + dataset:
+	input_size: (3, 224, 224)
+	interpolation: bicubic
+	mean: (0.485, 0.456, 0.406)
+	std: (0.229, 0.224, 0.225)
+	crop_pct: 0.9
+	crop_mode: center
+Test: [   0/98]  Time: 2.912s (2.912s,  175.80/s)  Loss:  0.5811 (0.5811)  Acc@1:  87.500 ( 87.500)  Acc@5:  97.656 ( 97.656)
+Test: [  10/98]  Time: 0.464s (0.738s,  693.44/s)  Loss:  0.6396 (0.6647)  Acc@1:  87.891 ( 85.760)  Acc@5:  96.094 ( 97.212)
+Test: [  20/98]  Time: 0.247s (0.660s,  775.66/s)  Loss:  0.6511 (0.6753)  Acc@1:  87.891 ( 85.742)  Acc@5:  96.484 ( 97.098)
+Test: [  30/98]  Time: 1.034s (0.632s,  810.69/s)  Loss:  0.7092 (0.6895)  Acc@1:  83.008 ( 85.005)  Acc@5:  96.484 ( 97.165)
+Test: [  40/98]  Time: 0.430s (0.614s,  833.84/s)  Loss:  1.1995 (0.6969)  Acc@1:  72.070 ( 84.880)  Acc@5:  91.992 ( 97.085)
+Test: [  50/98]  Time: 0.244s (0.600s,  853.58/s)  Loss:  0.8893 (0.7610)  Acc@1:  78.906 ( 83.142)  Acc@5:  94.922 ( 96.400)
+Test: [  60/98]  Time: 1.272s (0.602s,  851.05/s)  Loss:  1.3094 (0.7832)  Acc@1:  65.234 ( 82.659)  Acc@5:  90.820 ( 96.084)
+Test: [  70/98]  Time: 0.245s (0.587s,  872.48/s)  Loss:  0.7729 (0.8069)  Acc@1:  82.812 ( 82.034)  Acc@5:  95.898 ( 95.830)
+Test: [  80/98]  Time: 0.763s (0.583s,  877.94/s)  Loss:  0.9436 (0.8303)  Acc@1:  80.664 ( 81.551)  Acc@5:  93.555 ( 95.503)
+Test: [  90/98]  Time: 1.493s (0.584s,  876.77/s)  Loss:  0.9133 (0.8493)  Acc@1:  77.930 ( 80.924)  Acc@5:  95.312 ( 95.355)
+ * Acc@1 80.980 (19.020) Acc@5 95.404 (4.596)
+---
+Entropy Threshold: 0.8
+---
+Model 1 Dispatched: 55.01% (27506/50000)
+Model 1 Accuracy: 93.35% (25676/27506)
+---
+Model 2 Dispatched: 44.99% (22494/50000)
+Model 2 Accuracy: 65.86% (14814/22494)
+---
+GMACs: 3.319448
+--result
+{
+    "model": "thinkingvit",
+    "top1": 80.98,
+    "top1_err": 19.02,
+    "top5": 95.404,
+    "top5_err": 4.596,
+    "param_count": 22.12,
+    "img_size": 224,
+    "crop_pct": 0.9,
+    "interpolation": "bicubic"
+}
