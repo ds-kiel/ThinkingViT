@@ -61,14 +61,6 @@ Training uses `train.py` through the provided distributed launcher. The main rec
   --eval-every 10
 ```
 
-Important arguments:
-
-- `--model thinkingvit`: use the registered ThinkingViT constructor.
-- `--thinking_stages 3 6`: use the current two-stage `3H -> 6H` schedule.
-- `--initial-checkpoint`: optional DeiT/ThinkingViT checkpoint used for initialization.
-- `--eval-every`: run validation every `k` epochs; training updates are unchanged.
-- `--data`: ImageNet-1K root directory.
-
 When loading a DeiT checkpoint, the Token Recycling projection layers are initialized from scratch because they do not exist in vanilla DeiT. This is expected.
 
 Training outputs are written under:
@@ -98,6 +90,33 @@ The same command is available as a Slurm job:
 ```bash
 sbatch job_train_swin.sh
 ```
+
+## ⚙️ Arguments
+
+### ThinkingViT training
+
+- `--config args.yaml`: loads the DeiT-style training recipe, including optimizer, augmentation, scheduler, EMA, and regularization settings.
+- `--model thinkingvit`: uses the registered ThinkingViT constructor instead of a vanilla DeiT constructor.
+- `--data` / `--data-dir`: ImageNet-1K root directory containing `train/` and `validation/`.
+- `--batch-size`: per-process training batch size. The effective global batch size is `batch-size * number-of-GPUs * grad-accum-steps`.
+- `--initial-checkpoint`: optional checkpoint used to initialize the model before training. Use a DeiT-Small-compatible checkpoint for `3H -> 6H`.
+- `--thinking_stages 3 6`: defines the two ThinkingViT stages. The first stage uses 3 attention heads; difficult samples continue to the 6-head stage during evaluation.
+- `--eval-every K`: runs validation every `K` epochs. This only changes how often validation is run; it does not change training updates.
+
+### ThinkingViT-Swin training
+
+- `--config args_swin.yaml`: loads the Swin-S training recipe.
+- `--model swin_small_patch4_window7_224`: uses Swin-S at 224x224 resolution.
+- `--pretrained`: initializes from the built-in timm pretrained Swin-S weights.
+- `--head-round-1 3 3 6 12`: first Swin thinking round, with one head count per Swin stage.
+- `--head-round-2 3 6 12 24`: second Swin thinking round. These are the full Swin-S stage widths.
+
+### Evaluation
+
+- `--checkpoint`: path to the trained ThinkingViT or ThinkingViT-Swin checkpoint.
+- `--use-ema`: evaluates the EMA weights stored in the checkpoint when available.
+- `--threshold`: entropy threshold for early exit. Lower thresholds send more samples to the later stage and increase GMACs; higher thresholds exit earlier and reduce GMACs.
+- `--batch-size`: validation batch size.
 
 ## 🛠️ Evaluation
 

@@ -7,7 +7,6 @@ __pycache__/
 *.out
 *.err
 output/
-logs/
 segmentation/plot.py
 segmentation/segmaps/
 segmentation/segmaps_1_rounds/
