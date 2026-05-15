@@ -19,7 +19,7 @@ Vision Transformers deliver state-of-the-art performance, yet their fixed comput
 - **Elastic inference with one ViT**: evaluate an image using a small attention-head subset first, then activate more heads only when needed.
 - **Token Recycling**: later stages reuse information from earlier-stage embeddings through lightweight projection layers.
 - **DeiT-compatible training**: ThinkingViT follows the DeiT training recipe and keeps the backbone structure intact.
-- **Stage-defined model creation**: the registered `thinkingvit` model is built directly from `--thinking_stages`.
+- **Two-stage ThinkingViT**: the current ImageNet setup uses the `3H -> 6H` thinking schedule.
 - **Swin support**: ThinkingViT-Swin uses configurable per-stage head rounds for hierarchical Swin backbones.
 
 ## 📦 Installation
@@ -44,38 +44,6 @@ ILSVRC2012/
     └── ...
 ```
 
-## 📥 Pretrained Checkpoints
-
-Pretrained ThinkingViT checkpoints for the paper configurations are available on **[Zenodo](https://zenodo.org/records/15468060)**.
-
-Available configurations:
-
-- `2H -> 3H`
-- `2H -> 3H -> 6H`
-- `2H -> 6H`
-- `3H -> 6H`
-- `3H -> 6H -> 12H`
-- `3H -> 9H`
-- `3H -> 12H`
-
-## 🧠 Model Selection
-
-Use the registered model name:
-
-```bash
---model thinkingvit
-```
-
-The model width is inferred from the largest value in `--thinking_stages`:
-
-| Thinking stages | Created model width | DeiT-compatible scale |
-|---|---:|---|
-| `3 6` | 6 heads, 384 dim | DeiT-Small |
-| `3 6 12` | 12 heads, 768 dim | DeiT-Base |
-| `3 12` | 12 heads, 768 dim | DeiT-Base |
-
-For example, `--thinking_stages 3 6` creates a 6-head model. `--thinking_stages 3 6 12` creates a 12-head model.
-
 ## 🎯 Training
 
 Training uses `train.py` through the provided distributed launcher. The main recipe is stored in `args.yaml`.
@@ -93,23 +61,10 @@ Training uses `train.py` through the provided distributed launcher. The main rec
   --eval-every 10
 ```
 
-### Three-stage ThinkingViT: `3H -> 6H -> 12H`
-
-```bash
-./distributed_train.sh 4 \
-  --config args.yaml \
-  --model thinkingvit \
-  --batch-size 512 \
-  --data /path/to/ILSVRC2012/ \
-  --initial-checkpoint /path/to/deit-base-or-thinkingvit-checkpoint.pth.tar \
-  --thinking_stages 3 6 12 \
-  --eval-every 10
-```
-
 Important arguments:
 
 - `--model thinkingvit`: use the registered ThinkingViT constructor.
-- `--thinking_stages`: list of active attention-head counts for progressive stages.
+- `--thinking_stages 3 6`: use the current two-stage `3H -> 6H` schedule.
 - `--initial-checkpoint`: optional DeiT/ThinkingViT checkpoint used for initialization.
 - `--eval-every`: run validation every `k` epochs; training updates are unchanged.
 - `--data`: ImageNet-1K root directory.
