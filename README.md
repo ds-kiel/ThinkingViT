@@ -14,14 +14,6 @@ Vision Transformers deliver state-of-the-art performance, yet their fixed comput
   <img src="figures/demo.png" width="100%">
 </div>
 
-## ✨ Highlights
-
-- **Elastic inference with one ViT**: evaluate an image using a small attention-head subset first, then activate more heads only when needed.
-- **Token Recycling**: later stages reuse information from earlier-stage embeddings through lightweight projection layers.
-- **DeiT-compatible training**: ThinkingViT follows the DeiT training recipe and keeps the backbone structure intact.
-- **Two-stage ThinkingViT**: the current ImageNet setup uses the `3H -> 6H` thinking schedule.
-- **Swin support**: ThinkingViT-Swin uses configurable per-stage head rounds for hierarchical Swin backbones.
-
 ## 📦 Installation
 
 Create an environment and install dependencies:
@@ -44,7 +36,7 @@ ILSVRC2012/
     └── ...
 ```
 
-## 🎯 Training
+## 🎯 ThinkingViT on DeiT
 
 Training uses `train.py` through the provided distributed launcher. The main recipe is stored in `args.yaml`.
 
@@ -56,12 +48,20 @@ Training uses `train.py` through the provided distributed launcher. The main rec
   --model thinkingvit \
   --batch-size 512 \
   --data /path/to/ILSVRC2012/ \
-  --initial-checkpoint /path/to/deit-small-or-thinkingvit-checkpoint.pth.tar \
+  --initial-checkpoint /path/to/initial-checkpoint.pth.tar \
   --thinking_stages 3 6 \
   --eval-every 10
 ```
 
-When loading a DeiT checkpoint, the Token Recycling projection layers are initialized from scratch because they do not exist in vanilla DeiT. This is expected.
+### ThinkingViT training arguments
+
+- `--config args.yaml`: loads the DeiT-style training recipe, including optimizer, augmentation, scheduler, EMA, and regularization settings.
+- `--model thinkingvit`: uses the registered ThinkingViT constructor instead of a vanilla DeiT constructor.
+- `--data` / `--data-dir`: ImageNet-1K root directory containing `train/` and `validation/`.
+- `--batch-size`: per-process training batch size. The effective global batch size is `batch-size * number-of-GPUs * grad-accum-steps`.
+- `--initial-checkpoint`: optional checkpoint used to initialize the model before training.
+- `--thinking_stages 3 6`: defines the two ThinkingViT stages. The first stage uses 3 attention heads; difficult samples continue to the 6-head stage during evaluation.
+- `--eval-every K`: runs validation every `K` epochs. This only changes how often validation is run; it does not change training updates.
 
 Training outputs are written under:
 
@@ -69,57 +69,16 @@ Training outputs are written under:
 output/train/<timestamp>-thinkingvit-224/
 ```
 
-### ThinkingViT-Swin: Swin-S `12H -> 24H`
+## 🛠️ ThinkingViT on DeiT Evaluation
 
-Swin training uses `train_swin.py` and the recipe in `args_swin.yaml`. The head schedule is passed as two Swin rounds, one value per Swin stage.
+Use `validate.py` for ImageNet validation.
 
-```bash
-torchrun --nproc_per_node=4 train_swin.py \
-  --config args_swin.yaml \
-  --model swin_small_patch4_window7_224 \
-  --pretrained \
-  --data-dir /path/to/ILSVRC2012/ \
-  --head-round-1 3 3 6 12 \
-  --head-round-2 3 6 12 24
-```
+### Evaluation arguments
 
-
-The same command is available as a Slurm job:
-
-```bash
-sbatch job_train_swin.sh
-```
-
-## ⚙️ Arguments
-
-### ThinkingViT training
-
-- `--config args.yaml`: loads the DeiT-style training recipe, including optimizer, augmentation, scheduler, EMA, and regularization settings.
-- `--model thinkingvit`: uses the registered ThinkingViT constructor instead of a vanilla DeiT constructor.
-- `--data` / `--data-dir`: ImageNet-1K root directory containing `train/` and `validation/`.
-- `--batch-size`: per-process training batch size. The effective global batch size is `batch-size * number-of-GPUs * grad-accum-steps`.
-- `--initial-checkpoint`: optional checkpoint used to initialize the model before training. Use a DeiT-Small-compatible checkpoint for `3H -> 6H`.
-- `--thinking_stages 3 6`: defines the two ThinkingViT stages. The first stage uses 3 attention heads; difficult samples continue to the 6-head stage during evaluation.
-- `--eval-every K`: runs validation every `K` epochs. This only changes how often validation is run; it does not change training updates.
-
-### ThinkingViT-Swin training
-
-- `--config args_swin.yaml`: loads the Swin-S training recipe.
-- `--model swin_small_patch4_window7_224`: uses Swin-S at 224x224 resolution.
-- `--pretrained`: initializes from the built-in timm pretrained Swin-S weights.
-- `--head-round-1 3 3 6 12`: first Swin thinking round, with one head count per Swin stage.
-- `--head-round-2 3 6 12 24`: second Swin thinking round. These are the full Swin-S stage widths.
-
-### Evaluation
-
-- `--checkpoint`: path to the trained ThinkingViT or ThinkingViT-Swin checkpoint.
+- `--checkpoint`: path to the trained ThinkingViT checkpoint.
 - `--use-ema`: evaluates the EMA weights stored in the checkpoint when available.
 - `--threshold`: entropy threshold for early exit. Lower thresholds send more samples to the later stage and increase GMACs; higher thresholds exit earlier and reduce GMACs.
 - `--batch-size`: validation batch size.
-
-## 🛠️ Evaluation
-
-Use `validate.py` for ImageNet validation.
 
 ### Threshold evaluation
 
@@ -166,7 +125,63 @@ python validate.py \
 
 Evaluation prints the overall accuracy, per-stage dispatch rate, per-stage accuracy, and GMACs.
 
-### ThinkingViT-Swin evaluation
+For a Slurm threshold sweep with the DeiT-based model, edit the `THRESHOLDS` list in `job_eval.sh` and run:
+
+```bash
+sbatch job_eval.sh
+```
+
+## 📊 ImageNet-1K Results
+
+Performance of **ThinkingViT `3H -> 6H`** across entropy thresholds, copied from the current evaluation summary.
+
+| Threshold | Acc@1 (%) | GMACs |
+|---:|---:|---:|
+| 0.0 | 81.440 | 5.850 |
+| 0.1 | 81.440 | 5.474 |
+| 0.2 | 81.436 | 4.870 |
+| 0.3 | 81.418 | 4.494 |
+| 0.5 | 81.368 | 3.977 |
+| 0.8 | 80.980 | 3.319 |
+| 1.0 | 80.310 | 2.907 |
+| 1.2 | 79.462 | 2.543 |
+| 1.4 | 78.502 | 2.223 |
+| 1.6 | 77.292 | 1.944 |
+| 2.0 | 74.712 | 1.441 |
+| 5.0 | 73.536 | 1.250 |
+| 10.0 | 73.536 | 1.250 |
+
+Lower thresholds activate later stages more often and improve accuracy at higher compute. Higher thresholds exit earlier and reduce GMACs.
+
+## 🎯 ThinkingViT on Swin Transformer
+
+Swin training uses `train_swin.py` and the recipe in `args_swin.yaml`. The head schedule is passed as two Swin rounds, with one head count per Swin stage. Swin-S has four stages, so each round is specified with four values. For Swin-S, the first thinking round keeps the full capacity of the first stage and uses half of the attention heads in the last three stages, where most layers and attention heads are concentrated. The second round then runs the full Swin-S capacity. In the default setup, this corresponds to `(3, 3, 6, 12) -> (3, 6, 12, 24)`.
+
+```bash
+torchrun --nproc_per_node=4 train_swin.py \
+  --config args_swin.yaml \
+  --model swin_small_patch4_window7_224 \
+  --pretrained \
+  --data-dir /path/to/ILSVRC2012/ \
+  --head-round-1 3 3 6 12 \
+  --head-round-2 3 6 12 24
+```
+
+The same command is available as a Slurm job:
+
+```bash
+sbatch job_train_swin.sh
+```
+
+### ThinkingViT-Swin training arguments
+
+- `--config args_swin.yaml`: loads the Swin-S training recipe.
+- `--model swin_small_patch4_window7_224`: uses Swin-S at 224x224 resolution.
+- `--pretrained`: initializes from the built-in timm pretrained Swin-S weights.
+- `--head-round-1 3 3 6 12`: first Swin thinking round. The four values correspond to Swin-S stages 1-4 and allocate 3, 3, 6, and 12 heads respectively.
+- `--head-round-2 3 6 12 24`: second Swin thinking round. The four values again correspond to stages 1-4 and use the full Swin-S stage widths.
+
+## 🛠️ ThinkingViT on Swin Transformer Validation
 
 Use `validate_swin.py` for Swin threshold evaluation:
 
@@ -197,29 +212,7 @@ For a Slurm threshold sweep, edit the `THRESHOLDS` list in `job_eval_swin.sh` an
 sbatch job_eval_swin.sh
 ```
 
-## 📊 ImageNet-1K Results
-
-Performance of **ThinkingViT `3H -> 6H`** across entropy thresholds, copied from the current evaluation summary.
-
-| Threshold | Acc@1 (%) | GMACs |
-|---:|---:|---:|
-| 0.0 | 81.440 | 5.850 |
-| 0.1 | 81.440 | 5.474 |
-| 0.2 | 81.436 | 4.870 |
-| 0.3 | 81.418 | 4.494 |
-| 0.5 | 81.368 | 3.977 |
-| 0.8 | 80.980 | 3.319 |
-| 1.0 | 80.310 | 2.907 |
-| 1.2 | 79.462 | 2.543 |
-| 1.4 | 78.502 | 2.223 |
-| 1.6 | 77.292 | 1.944 |
-| 2.0 | 74.712 | 1.441 |
-| 5.0 | 73.536 | 1.250 |
-| 10.0 | 73.536 | 1.250 |
-
-Lower thresholds activate later stages more often and improve accuracy at higher compute. Higher thresholds exit earlier and reduce GMACs.
-
-### ThinkingViT-Swin Results
+## 📊 ThinkingViT-Swin Results
 
 Performance of **ThinkingViT-Swin / Swin-S** with head rounds `(3, 3, 6, 12) -> (3, 6, 12, 24)`, copied from `eval_logs_swin/summary.md`.
 
@@ -255,4 +248,4 @@ Performance of **ThinkingViT-Swin / Swin-S** with head rounds `(3, 3, 6, 12) -> 
 
 ## 🙏 Acknowledgements
 
-This repository builds on [pytorch-image-models (timm)](https://github.com/huggingface/pytorch-image-models). We thank the timm maintainers and the DeiT authors for their open-source implementations.
+This repository builds on [pytorch-image-models (timm)](https://github.com/huggingface/pytorch-image-models) and also draws inspiration from the [HydraViT](https://github.com/ds-kiel/HydraViT) repository. We thank the timm maintainers, the DeiT authors, and the HydraViT authors for their open-source implementations.
