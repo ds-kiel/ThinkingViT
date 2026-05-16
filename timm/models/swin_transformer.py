@@ -613,6 +613,50 @@ class ThinkingClassifierHead(nn.Module):
             self.fc = self.fc.to(device)
 
 
+class SwinTokenProjector(nn.Module):
+    """Upsample previous-round Swin tokens and project them to the next round width."""
+
+    def __init__(
+            self,
+            in_channels: int,
+            out_channels: int,
+            target_hw: Tuple[int, int],
+            source_hw: Tuple[int, int],
+    ):
+        super().__init__()
+        self.target_hw = tuple(int(v) for v in target_hw)
+        self.source_hw = tuple(int(v) for v in source_hw)
+        self.in_channels = int(in_channels)
+        self.out_channels = int(out_channels)
+        if self.in_channels < 1 or self.out_channels < 1:
+            raise ValueError('Projector channel counts must be positive.')
+        if any(t % s != 0 for t, s in zip(self.target_hw, self.source_hw)):
+            raise ValueError(f'Target size {self.target_hw} must be an integer multiple of source size {self.source_hw}.')
+        scale_h = self.target_hw[0] // self.source_hw[0]
+        scale_w = self.target_hw[1] // self.source_hw[1]
+        self.upsample = nn.ConvTranspose2d(
+            in_channels=self.in_channels,
+            out_channels=self.in_channels,
+            kernel_size=(scale_h, scale_w),
+            stride=(scale_h, scale_w),
+            groups=self.in_channels,
+            bias=False,
+        )
+        self.proj = nn.Conv2d(self.in_channels, self.out_channels, kernel_size=1, bias=True)
+
+    def forward(self, x: torch.Tensor, keep_dim_in: int, keep_dim_out: int) -> torch.Tensor:
+        if keep_dim_in != self.in_channels or keep_dim_out != self.out_channels:
+            raise ValueError(
+                f'Projector was built for {self.in_channels}->{self.out_channels} channels, '
+                f'but received {keep_dim_in}->{keep_dim_out}. Check head_rounds.'
+            )
+        x = x.permute(0, 3, 1, 2)
+        x = self.upsample(x)
+        x = self.proj(x)
+        x = x.permute(0, 2, 3, 1)
+        return x
+
+
 class SwinTransformer(nn.Module):
     """ Swin Transformer
 
@@ -642,6 +686,7 @@ class SwinTransformer(nn.Module):
             norm_layer: Union[str, Callable] = nn.LayerNorm,
             weight_init: str = '',
             head_rounds: Optional[Tuple[Tuple[int, ...], ...]] = None,
+            build_token_projector: bool = False,
             **kwargs,
     ):
         """
@@ -747,12 +792,13 @@ class SwinTransformer(nn.Module):
         self.head_rounds: Tuple[Tuple[int, ...], ...] = ()
         self.max_heads = max(self.stage_max_heads)
         self.eval_stage_index = 0
+        self.proj_layer = None
         self.set_head_rounds(head_rounds or ((3, 3, 6, 12), (3, 6, 12, 24)))
         self.debug_thinking = False
         if not hasattr(self, 'alpha'):
             self.alpha = nn.ParameterList([nn.Parameter(torch.zeros(1))])
-        if not hasattr(self, 'proj_layer'):
-            self.proj_layer = None
+        if build_token_projector:
+            self.proj_layer = self._build_token_projector()
         if weight_init != 'skip':
             self.init_weights(weight_init)
 
@@ -826,6 +872,21 @@ class SwinTransformer(nn.Module):
         in_channels = self.keep_dim_for_stage(self.num_layers - 1, self.head_rounds[0][-1])
         out_channels = self.keep_dim_for_stage(0, self.head_rounds[1][0])
         return in_channels, out_channels
+
+    @torch.jit.ignore
+    def _build_token_projector(self) -> SwinTokenProjector:
+        in_channels, out_channels = self.projector_dims()
+        downsample_factor = 2 ** (self.num_layers - 1)
+        source_hw = (
+            self.patch_grid[0] // downsample_factor,
+            self.patch_grid[1] // downsample_factor,
+        )
+        return SwinTokenProjector(
+            in_channels=in_channels,
+            out_channels=out_channels,
+            target_hw=self.patch_grid,
+            source_hw=source_hw,
+        )
 
     @torch.jit.ignore
     def get_classifier(self):
