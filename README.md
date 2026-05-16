@@ -4,7 +4,7 @@
 
 ***CVPR'2026 Main-Track Poster***
 
-**[🌐 Project website](https://ds-kiel.github.io/ThinkingViT-project-page/)** · **[📄 Paper: arXiv:2507.10800](https://arxiv.org/abs/2507.10800)** · **[📦 Model weights: Zenodo](https://zenodo.org/records/20207165)**
+**[🌐 Project website](https://ds-kiel.github.io/ThinkingViT-project-page/)** · **[📄 Paper: arXiv:2507.10800](https://arxiv.org/abs/2507.10800)** · **[🤗 Models: Hugging Face](https://huggingface.co/alihjt/thinkingvit_deit-3h-6h-imagenet1k)** · **[📦 Model weights: Zenodo](https://zenodo.org/records/20207165)**
 
 </div>
 
@@ -231,6 +231,69 @@ Performance of **ThinkingViT-Swin / Swin-S** with head rounds `(3, 3, 6, 12) -> 
 | 2.0 | 78.410 | 2.97 |
 | 5.0 | 77.990 | 2.82 |
 
+## 🤗 Pretrained Models on Hugging Face
+
+The ImageNet-1K EMA checkpoints are available on Hugging Face Hub:
+
+| Model | Hub repository | Notes |
+|---|---|---|
+| ThinkingViT-DeiT `3H -> 6H` | [alihjt/thinkingvit_deit-3h-6h-imagenet1k](https://huggingface.co/alihjt/thinkingvit_deit-3h-6h-imagenet1k) | DeiT-style ThinkingViT with two thinking stages. |
+| ThinkingViT-Swin / Swin-S | [alihjt/thinkingvit-swin-s-imagenet1k](https://huggingface.co/alihjt/thinkingvit-swin-s-imagenet1k) | Swin-S with head rounds `(3, 3, 6, 12) -> (3, 6, 12, 24)`. |
+
+Use the models from this repository root so Python imports the custom local `timm` implementation.
+
+### Load ThinkingViT-DeiT from Hugging Face
+
+```python
+import torch
+from timm.models import create_model
+
+model = create_model(
+    "hf-hub:alihjt/thinkingvit_deit-3h-6h-imagenet1k",
+    pretrained=True,
+)
+model.eval()
+
+x = torch.randn(1, 3, 224, 224)
+with torch.no_grad():
+    logits, stage = model(x, threshold=1.0)
+
+print(logits.shape)  # (1, 1000)
+print(stage)         # 0 = 3 heads, 1 = 6 heads
+```
+
+### Load ThinkingViT-Swin from Hugging Face
+
+```python
+import torch
+from timm.models import create_model
+
+model = create_model(
+    "hf-hub:alihjt/thinkingvit-swin-s-imagenet1k",
+    pretrained=True,
+)
+model.eval()
+
+x = torch.randn(1, 3, 224, 224)
+with torch.no_grad():
+    logits, stage = model(x, threshold=1.0)
+
+print(logits.shape)  # (1, 1000)
+print(stage)         # 0 = reduced-head round, 1 = full Swin-S round
+```
+
+The entropy threshold controls early exit. Lower thresholds send more samples to later stages and improve accuracy at higher compute; higher thresholds exit earlier and reduce compute.
+
+For a quick end-to-end test with an image, use:
+
+```bash
+python scripts/test_hf_thinkingvit_deit.py \
+  --image sample_images/labrador_dog.jpg \
+  --threshold 1.0
+```
+
+To regenerate or publish Hub exports, see `HF_UPLOAD.md`.
+
 ## 📁 Useful Files
 
 - `train.py`: ImageNet training entry point.
@@ -240,6 +303,9 @@ Performance of **ThinkingViT-Swin / Swin-S** with head rounds `(3, 3, 6, 12) -> 
 - `validate_swin.py`: Swin validation and threshold evaluation.
 - `args_swin.yaml`: Swin-S training recipe.
 - `calc_swin_gmacs.py`: per-round GMAC calculator for ThinkingViT-Swin.
+- `scripts/export_hf_models.py`: exports local checkpoints to Hugging Face Hub-ready model folders.
+- `scripts/test_hf_thinkingvit_deit.py`: quick Hugging Face inference smoke test for ThinkingViT-DeiT.
+- `HF_UPLOAD.md`: Hugging Face publishing checklist and paper-page instructions.
 - `job_train_swin.sh`: Slurm launcher for Swin training.
 - `job_eval_swin.sh`: Slurm threshold sweep for Swin evaluation.
 - `distributed_train.sh`: small `torchrun` launcher.
