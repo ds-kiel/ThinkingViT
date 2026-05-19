@@ -28,7 +28,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--repo-id",
-        default="alihjt/thinkingvit_deit-3h-6h-imagenet1k",
+        default="NCPS/thinkingvit_deit-3h-6h-imagenet1k",
         help="Hugging Face model repository id.",
     )
     parser.add_argument("--image", type=Path, default=None, help="Optional image path. Uses random input if omitted.")

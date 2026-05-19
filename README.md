@@ -237,8 +237,8 @@ The ImageNet-1K EMA checkpoints are available on Hugging Face Hub:
 
 | Model | Hub repository | Notes |
 |---|---|---|
-| ThinkingViT-DeiT `3H -> 6H` | [alihjt/thinkingvit_deit-3h-6h-imagenet1k](https://huggingface.co/alihjt/thinkingvit_deit-3h-6h-imagenet1k) | DeiT-style ThinkingViT with two thinking stages. |
-| ThinkingViT-Swin / Swin-S | [alihjt/thinkingvit-swin-s-imagenet1k](https://huggingface.co/alihjt/thinkingvit-swin-s-imagenet1k) | Swin-S with head rounds `(3, 3, 6, 12) -> (3, 6, 12, 24)`. |
+| ThinkingViT-DeiT `3H -> 6H` | [NCPS/thinkingvit_deit-3h-6h-imagenet1k](https://huggingface.co/NCPS/thinkingvit_deit-3h-6h-imagenet1k) | DeiT-style ThinkingViT with two thinking stages. |
+| ThinkingViT-Swin / Swin-S | [NCPS/thinkingvit-swin-s-imagenet1k](https://huggingface.co/NCPS/thinkingvit-swin-s-imagenet1k) | Swin-S with head rounds `(3, 3, 6, 12) -> (3, 6, 12, 24)`. |
 
 Use the models from this repository root so Python imports the custom local `timm` implementation.
 
@@ -249,7 +249,7 @@ import torch
 from timm.models import create_model
 
 model = create_model(
-    "hf-hub:alihjt/thinkingvit_deit-3h-6h-imagenet1k",
+    "hf-hub:NCPS/thinkingvit_deit-3h-6h-imagenet1k",
     pretrained=True,
 )
 model.eval()
@@ -269,7 +269,7 @@ import torch
 from timm.models import create_model
 
 model = create_model(
-    "hf-hub:alihjt/thinkingvit-swin-s-imagenet1k",
+    "hf-hub:NCPS/thinkingvit-swin-s-imagenet1k",
     pretrained=True,
 )
 model.eval()

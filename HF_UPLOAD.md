@@ -20,7 +20,7 @@ python scripts/export_hf_models.py --namespace YOUR_HF_NAMESPACE
 For the Kiel organization, use:
 
 ```bash
-python scripts/export_hf_models.py --namespace ds-kiel
+python scripts/export_hf_models.py --namespace NCPS
 ```
 
 This creates:
@@ -47,20 +47,20 @@ huggingface-cli login
 Then push both model repos:
 
 ```bash
-python scripts/export_hf_models.py --namespace ds-kiel --push
+python scripts/export_hf_models.py --namespace NCPS --push
 ```
 
 To test privately first:
 
 ```bash
-python scripts/export_hf_models.py --namespace ds-kiel --private --push
+python scripts/export_hf_models.py --namespace NCPS --private --push
 ```
 
 You can also push one model at a time:
 
 ```bash
-python scripts/export_hf_models.py --namespace ds-kiel --model thinkingvit_deit --push
-python scripts/export_hf_models.py --namespace ds-kiel --model swin --push
+python scripts/export_hf_models.py --namespace NCPS --model thinkingvit_deit --push
+python scripts/export_hf_models.py --namespace NCPS --model swin --push
 ```
 
 ## 3. Submit and claim the paper
@@ -82,8 +82,8 @@ After the paper page exists, claim it as an author and add:
 - GitHub: https://github.com/ds-kiel/ThinkingViT
 - Project page: https://ds-kiel.github.io/ThinkingViT-project-page/
 - Models:
-  - `ds-kiel/thinkingvit_deit-3h-6h-imagenet1k`
-  - `ds-kiel/thinkingvit-swin-s-imagenet1k`
+  - `NCPS/thinkingvit_deit-3h-6h-imagenet1k`
+  - `NCPS/thinkingvit-swin-s-imagenet1k`
 
 ## Suggested Reply to Niels
 
