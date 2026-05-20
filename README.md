@@ -314,4 +314,4 @@ To regenerate or publish Hub exports, see `HF_UPLOAD.md`.
 
 ## 🙏 Acknowledgements
 
-This repository builds on [pytorch-image-models (timm)](https://github.com/huggingface/pytorch-image-models) and also draws inspiration from the [HydraViT](https://github.com/ds-kiel/HydraViT) repository. We thank the timm maintainers, the DeiT authors, and the HydraViT authors for their open-source implementations.
+This repository builds on [pytorch-image-models (timm)](https://github.com/huggingface/pytorch-image-models) and also draws inspiration from the [HydraViT](https://github.com/ds-kiel/HydraViT) repository.
