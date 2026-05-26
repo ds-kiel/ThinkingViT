@@ -4,7 +4,7 @@
 The script intentionally exports EMA state dicts as safetensors instead of the
 full training checkpoints, which also contain optimizer state and require pickle
 loading. Run once without --push to inspect the generated folders, then run with
---push after `huggingface-cli login` or after setting HF_TOKEN.
+--push after `hf auth login` or after setting HF_TOKEN.
 '''
 
 from __future__ import annotations
@@ -29,6 +29,7 @@ from timm.models.hub import save_for_hf
 
 DEFAULT_OUTPUT_DIR = REPO_ROOT / "hf_exports"
 PAPER_URL = "https://arxiv.org/abs/2507.10800"
+HF_PAPER_URL = "https://huggingface.co/papers/2507.10800"
 PROJECT_URL = "https://ds-kiel.github.io/ThinkingViT-project-page/"
 GITHUB_URL = "https://github.com/ds-kiel/ThinkingViT"
 
@@ -101,6 +102,34 @@ SPECS: Dict[str, ModelSpec] = {
 | 10.0 | 73.536 | 1.250 |''',
         usage="thinkingvit_deit",
     ),
+    "thinkingvit_800epochs": ModelSpec(
+        key="thinkingvit_800epochs",
+        slug="thinkingvit_800epochs",
+        title="ThinkingViT 800 Epochs DeiT 3H -> 6H ImageNet-1K",
+        checkpoint=REPO_ROOT / "ThinkingViT_3_6_800epochs.pth.tar",
+        architecture="thinkingvit",
+        model_args={"thinking_stages": [3, 6]},
+        threshold_note=(
+            "The entropy threshold controls early exit. Lower thresholds send more samples "
+            "to the 6-head stage; higher thresholds exit earlier at the 3-head stage."
+        ),
+        result_table='''| Threshold | Acc@1 (%) | GMACs |
+|---:|---:|---:|
+| 0.0 | 81.850 | 5.850 |
+| 0.1 | 81.848 | 5.385 |
+| 0.2 | 81.846 | 4.751 |
+| 0.3 | 81.832 | 4.363 |
+| 0.5 | 81.758 | 3.841 |
+| 0.8 | 81.386 | 3.189 |
+| 1.0 | 80.636 | 2.781 |
+| 1.2 | 79.764 | 2.433 |
+| 1.4 | 78.846 | 2.136 |
+| 1.6 | 77.688 | 1.865 |
+| 2.0 | 75.500 | 1.417 |
+| 5.0 | 74.514 | 1.250 |
+| 10.0 | 74.514 | 1.250 |''',
+        usage="thinkingvit_deit",
+    ),
     "swin": ModelSpec(
         key="swin",
         slug="thinkingvit-swin-s-imagenet1k",
@@ -153,6 +182,11 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--push", action="store_true", help="Upload generated folders to the Hugging Face Hub.")
     parser.add_argument("--private", action="store_true", help="Create private Hub repos when pushing.")
+    parser.add_argument(
+        "--skip-create-repo",
+        action="store_true",
+        help="Skip Hub repo creation and only upload to an existing repo.",
+    )
     parser.add_argument("--token", default=None, help="Optional Hugging Face token. Defaults to HF_TOKEN/login cache.")
     parser.add_argument("--revision", default=None, help="Optional Hub revision/branch for upload.")
     return parser.parse_args()
@@ -228,6 +262,7 @@ This repository contains the ImageNet-1K EMA weights for **{spec.title}** from
 [ThinkingViT: Matryoshka Thinking Vision Transformer for Elastic Inference]({PAPER_URL}).
 
 - Paper: {PAPER_URL}
+- Hugging Face paper: {HF_PAPER_URL}
 - Code: {GITHUB_URL}
 - Project page: {PROJECT_URL}
 - Exported checkpoint key: `{checkpoint_key}`
@@ -282,8 +317,9 @@ def export_one(spec: ModelSpec, output_dir: Path, namespace: str, state_key: str
 def push_folder(folder: Path, repo_id: str, args: argparse.Namespace) -> None:
     from huggingface_hub import HfApi, upload_folder
 
-    api = HfApi(token=args.token)
-    api.create_repo(repo_id=repo_id, private=args.private, exist_ok=True)
+    if not args.skip_create_repo:
+        api = HfApi(token=args.token)
+        api.create_repo(repo_id=repo_id, private=args.private, exist_ok=True)
     upload_folder(
         repo_id=repo_id,
         folder_path=str(folder),
