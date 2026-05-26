@@ -133,6 +133,8 @@ sbatch job_eval.sh
 
 ## 📊 ImageNet-1K Results
 
+**ThinkingViT is architecture agnostic. The DeiT-based models below are built on top of the vanilla DeiT architecture. While ThinkingViT can outperform the corresponding DeiT baseline, the absolute accuracy is still limited by the capacity of that backbone. As shown by the Swin-based ThinkingViT results later, applying the same idea to a stronger architecture can reach higher accuracy.**
+
 Performance of **ThinkingViT `3H -> 6H`** across entropy thresholds, copied from the current evaluation summary.
 
 | Threshold | Acc@1 (%) | GMACs |
@@ -152,6 +154,24 @@ Performance of **ThinkingViT `3H -> 6H`** across entropy thresholds, copied from
 | 10.0 | 73.536 | 1.250 |
 
 Lower thresholds activate later stages more often and improve accuracy at higher compute. Higher thresholds exit earlier and reduce GMACs.
+
+Performance of **thinkingvit_800epochs** across entropy thresholds, copied from `eval_logs_800epochs/summary.md`.
+
+| Threshold | Acc@1 (%) | GMACs |
+|---:|---:|---:|
+| 0.0 | 81.850 | 5.850 |
+| 0.1 | 81.848 | 5.385 |
+| 0.2 | 81.846 | 4.751 |
+| 0.3 | 81.832 | 4.363 |
+| 0.5 | 81.758 | 3.841 |
+| 0.8 | 81.386 | 3.189 |
+| 1.0 | 80.636 | 2.781 |
+| 1.2 | 79.764 | 2.433 |
+| 1.4 | 78.846 | 2.136 |
+| 1.6 | 77.688 | 1.865 |
+| 2.0 | 75.500 | 1.417 |
+| 5.0 | 74.514 | 1.250 |
+| 10.0 | 74.514 | 1.250 |
 
 ## 🎯 ThinkingViT on Swin Transformer
 
