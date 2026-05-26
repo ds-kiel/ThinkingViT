@@ -4,7 +4,7 @@
 
 ***CVPR'2026 Main-Track Poster***
 
-**[🌐 Project website](https://ds-kiel.github.io/ThinkingViT-project-page/)** · **[📄 Paper: arXiv:2507.10800](https://arxiv.org/abs/2507.10800)** · **[🤗 Hugging Face Paper](https://huggingface.co/papers/2507.10800)** · **[📦 Model weights: Zenodo](https://zenodo.org/records/20207165)**
+**[🌐 Project website](https://ds-kiel.github.io/ThinkingViT-project-page/)** · **[📄 Paper: arXiv:2507.10800](https://arxiv.org/abs/2507.10800)** · **[🤗 Hugging Face Paper](https://huggingface.co/papers/2507.10800)** · **[📦 Model weights: Zenodo](https://zenodo.org/records/20395084)**
 
 </div>
 
@@ -135,43 +135,25 @@ sbatch job_eval.sh
 
 **ThinkingViT is architecture agnostic. The DeiT-based models below are built on top of the vanilla DeiT architecture. While ThinkingViT can outperform the corresponding DeiT baseline, the absolute accuracy is still limited by the capacity of that backbone. As shown by the Swin-based ThinkingViT results later, applying the same idea to a stronger architecture can reach higher accuracy.**
 
-Performance of **ThinkingViT `3H -> 6H`** across entropy thresholds, copied from the current evaluation summary.
+Performance of **ThinkingViT `3H -> 6H`** and **thinkingvit_800epochs** across entropy thresholds.
 
-| Threshold | Acc@1 (%) | GMACs |
-|---:|---:|---:|
-| 0.0 | 81.440 | 5.850 |
-| 0.1 | 81.440 | 5.474 |
-| 0.2 | 81.436 | 4.870 |
-| 0.3 | 81.418 | 4.494 |
-| 0.5 | 81.368 | 3.977 |
-| 0.8 | 80.980 | 3.319 |
-| 1.0 | 80.310 | 2.907 |
-| 1.2 | 79.462 | 2.543 |
-| 1.4 | 78.502 | 2.223 |
-| 1.6 | 77.292 | 1.944 |
-| 2.0 | 74.712 | 1.441 |
-| 5.0 | 73.536 | 1.250 |
-| 10.0 | 73.536 | 1.250 |
+| Threshold | ThinkingViT Acc@1 (%) | ThinkingViT GMACs | thinkingvit_800epochs Acc@1 (%) | thinkingvit_800epochs GMACs |
+|---:|---:|---:|---:|---:|
+| 0.0 | 81.440 | 5.850 | 81.850 | 5.850 |
+| 0.1 | 81.440 | 5.474 | 81.848 | 5.385 |
+| 0.2 | 81.436 | 4.870 | 81.846 | 4.751 |
+| 0.3 | 81.418 | 4.494 | 81.832 | 4.363 |
+| 0.5 | 81.368 | 3.977 | 81.758 | 3.841 |
+| 0.8 | 80.980 | 3.319 | 81.386 | 3.189 |
+| 1.0 | 80.310 | 2.907 | 80.636 | 2.781 |
+| 1.2 | 79.462 | 2.543 | 79.764 | 2.433 |
+| 1.4 | 78.502 | 2.223 | 78.846 | 2.136 |
+| 1.6 | 77.292 | 1.944 | 77.688 | 1.865 |
+| 2.0 | 74.712 | 1.441 | 75.500 | 1.417 |
+| 5.0 | 73.536 | 1.250 | 74.514 | 1.250 |
+| 10.0 | 73.536 | 1.250 | 74.514 | 1.250 |
 
 Lower thresholds activate later stages more often and improve accuracy at higher compute. Higher thresholds exit earlier and reduce GMACs.
-
-Performance of **thinkingvit_800epochs** across entropy thresholds, copied from `eval_logs_800epochs/summary.md`.
-
-| Threshold | Acc@1 (%) | GMACs |
-|---:|---:|---:|
-| 0.0 | 81.850 | 5.850 |
-| 0.1 | 81.848 | 5.385 |
-| 0.2 | 81.846 | 4.751 |
-| 0.3 | 81.832 | 4.363 |
-| 0.5 | 81.758 | 3.841 |
-| 0.8 | 81.386 | 3.189 |
-| 1.0 | 80.636 | 2.781 |
-| 1.2 | 79.764 | 2.433 |
-| 1.4 | 78.846 | 2.136 |
-| 1.6 | 77.688 | 1.865 |
-| 2.0 | 75.500 | 1.417 |
-| 5.0 | 74.514 | 1.250 |
-| 10.0 | 74.514 | 1.250 |
 
 ## 🎯 ThinkingViT on Swin Transformer
 
@@ -312,8 +294,6 @@ python scripts/test_hf_thinkingvit_deit.py \
   --threshold 1.0
 ```
 
-To regenerate or publish Hub exports, see `HF_UPLOAD.md`.
-
 ## 📁 Useful Files
 
 - `train.py`: ImageNet training entry point.
@@ -325,7 +305,6 @@ To regenerate or publish Hub exports, see `HF_UPLOAD.md`.
 - `calc_swin_gmacs.py`: per-round GMAC calculator for ThinkingViT-Swin.
 - `scripts/export_hf_models.py`: exports local checkpoints to Hugging Face Hub-ready model folders.
 - `scripts/test_hf_thinkingvit_deit.py`: quick Hugging Face inference smoke test for ThinkingViT-DeiT.
-- `HF_UPLOAD.md`: Hugging Face publishing checklist and paper-page instructions.
 - `job_train_swin.sh`: Slurm launcher for Swin training.
 - `job_eval_swin.sh`: Slurm threshold sweep for Swin evaluation.
 - `distributed_train.sh`: small `torchrun` launcher.
