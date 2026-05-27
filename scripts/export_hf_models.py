@@ -104,8 +104,8 @@ SPECS: Dict[str, ModelSpec] = {
     ),
     "thinkingvit_800epochs": ModelSpec(
         key="thinkingvit_800epochs",
-        slug="thinkingvit_800epochs",
-        title="ThinkingViT 800 Epochs DeiT 3H -> 6H ImageNet-1K",
+        slug="thinkingvit_deit-3h-6h-800epochs-imagenet1k",
+        title="ThinkingViT DeiT 3H -> 6H 800 Epochs ImageNet-1K",
         checkpoint=REPO_ROOT / "ThinkingViT_3_6_800epochs.pth.tar",
         architecture="thinkingvit",
         model_args={"thinking_stages": [3, 6]},

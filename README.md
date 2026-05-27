@@ -135,9 +135,9 @@ sbatch job_eval.sh
 
 **ThinkingViT is architecture agnostic. The DeiT-based models below are built on top of the vanilla DeiT architecture. While ThinkingViT can outperform the corresponding DeiT baseline, the absolute accuracy is still limited by the capacity of that backbone. As shown by the Swin-based ThinkingViT results later, applying the same idea to a stronger architecture can reach higher accuracy.**
 
-Performance of **ThinkingViT `3H -> 6H`** and **thinkingvit_800epochs** across entropy thresholds.
+Performance of **ThinkingViT `3H -> 6H`** and **ThinkingViT `3H -> 6H` 800 epochs** across entropy thresholds.
 
-| Threshold | ThinkingViT Acc@1 (%) | ThinkingViT GMACs | thinkingvit_800epochs Acc@1 (%) | thinkingvit_800epochs GMACs |
+| Threshold | ThinkingViT `3H -> 6H` Acc@1 (%) | ThinkingViT `3H -> 6H` GMACs | ThinkingViT `3H -> 6H` 800 Epochs Acc@1 (%) | ThinkingViT `3H -> 6H` 800 Epochs GMACs |
 |---:|---:|---:|---:|---:|
 | 0.0 | 81.440 | 5.850 | 81.850 | 5.850 |
 | 0.1 | 81.440 | 5.474 | 81.848 | 5.385 |
@@ -240,6 +240,7 @@ The ImageNet-1K EMA checkpoints are available on Hugging Face Hub:
 | Model | Hub repository | Notes |
 |---|---|---|
 | ThinkingViT-DeiT `3H -> 6H` | [NCPS/thinkingvit_deit-3h-6h-imagenet1k](https://huggingface.co/NCPS/thinkingvit_deit-3h-6h-imagenet1k) | DeiT-style ThinkingViT with two thinking stages. |
+| ThinkingViT-DeiT `3H -> 6H` 800 epochs | [NCPS/thinkingvit_deit-3h-6h-800epochs-imagenet1k](https://huggingface.co/NCPS/thinkingvit_deit-3h-6h-800epochs-imagenet1k) | 800-epoch DeiT-style ThinkingViT with two thinking stages. |
 | ThinkingViT-Swin / Swin-S | [NCPS/thinkingvit-swin-s-imagenet1k](https://huggingface.co/NCPS/thinkingvit-swin-s-imagenet1k) | Swin-S with head rounds `(3, 3, 6, 12) -> (3, 6, 12, 24)`. |
 
 Use the models from this repository root so Python imports the custom local `timm` implementation.
