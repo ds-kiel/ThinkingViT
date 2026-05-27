@@ -312,6 +312,19 @@ python scripts/test_hf_thinkingvit_deit.py \
 - `timm/models/vision_transformer.py`: ThinkingViT model registration and ViT implementation.
 - `timm/models/swin_transformer.py`: ThinkingViT-Swin head-round implementation.
 
+## Citing ThinkingViT
+
+```
+@InProceedings{Hojjat_2026_CVPR,
+    author    = {Hojjat, Ali and Haberer, Janek and Pirk, S\"oren and Landsiedel, Olaf},
+    title     = {ThinkingViT: Matryoshka Thinking Vision Transformer for Elastic Inference},
+    booktitle = {Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR)},
+    month     = {June},
+    year      = {2026},
+    pages     = {41923-41933}
+}
+```
+
 ## 🙏 Acknowledgements
 
 This repository builds on [pytorch-image-models (timm)](https://github.com/huggingface/pytorch-image-models) and also draws inspiration from the [HydraViT](https://github.com/ds-kiel/HydraViT) repository.
